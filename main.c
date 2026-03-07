@@ -25,31 +25,62 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <pty.h>
-
+#include <time.h>
+#include <signal.h>
+#include <arpa/inet.h>
+#include <poll.h>
 #include <cjson/cJSON.h>
+#include <pthread.h>
 
-struct serveringData {
-    WOLFSSH* wolfServer;
-    WOLFSSH_CTX* wolfContext;
+#include "callbacks.h"
+#include "logging.h"
+#include "main.h"
 
-    int socketFD;
-    int ipAddress;
-    int port;
-
-    int nextSession;
-} typedef serverData;
-
-struct useringData {
-    time_t timeOfBirth;
-    char* id;
-    char* ip;
-    char* keyAlgo;
-    char* username;
-    char* password;
-} typedef userData;
+serverData server_data;
 
 void signal_catcher(int signal) {
+    close(server_data.socketFD);
+    wolfSSH_CTX_free(server_data.wolfContext);
+    if (server_data.wolfServer) wolfSSH_free(server_data.wolfServer);
+    wolfSSH_Cleanup();
+    //exit(1);
+}
 
+void* read_pass(void* args) {
+
+    byte channelBuffer[1024];
+    while (1) {
+        int ret = wolfSSH_stream_read(server_data.wolfServer, channelBuffer, sizeof(channelBuffer));
+        if (ret > 0) {
+            printf("%s\n", (char*) channelBuffer);
+            write(server_data.bashCommunicator, channelBuffer, ret);
+            continue;
+        }
+        if (ret == 0) {
+            printf("the value of ret is 0\n");
+        }
+        if (ret < 0) {
+            printf("the value of ret is less than 0 - RRRR\n");
+        }
+    }
+}
+
+void* write_pass(void* args) {
+    byte channelBuffer[1024];
+    while (1) {
+        long ret = read(server_data.bashCommunicator, channelBuffer, sizeof(channelBuffer));
+        if (ret > 0) {
+            printf("%s\n", (char*) channelBuffer);
+            wolfSSH_stream_send(server_data.wolfServer, channelBuffer, ret);
+            continue;
+        }
+        if (ret == 0) {
+            printf("the value of ret is 0\n");
+        }
+        if (ret < 0) {
+            printf("the value of ret is less than 0 - WWWW\n");
+        }
+    }
 }
 
 int basher3_ItsBash(int *master) {
@@ -75,22 +106,13 @@ int basher3_ItsBash(int *master) {
 
 }
 
-int kill_all_user_data(userData billData) {
-    if (billData.id) {
-        free(billData.id);
-    }
-    if (billData.ip) {
-        free(billData.ip);
-    }
-    if (billData.keyAlgo) {
-        free(billData.keyAlgo);
-    }
-    if (billData.username) {
-        free(billData.username);
-    }
-    if (billData.password) {
-        free(billData.password);
-    }
+int kill_all_user_data(userData* billData) {
+    if (billData->id) free(billData->id);
+    if (billData->ip) free(billData->ip);
+    if (billData->keyAlgo) free(billData->keyAlgo);
+    if (billData->username) free(billData->username);
+    if (billData->password) free(billData->password);
+    return 0;
 }
 
 char* generate_session_id(int length) {
@@ -100,162 +122,13 @@ char* generate_session_id(int length) {
         return NULL;
     }
 
-    srand(time(NULL));
-
     for (int i = 0; i < length; i++) {
-        newID[i] = '0' + rand() % ('0' - '9' + 1);
+        newID[i] = '0' + rand() % ('9' - '0' + 1);
     }
     newID[length] = '\0';
 
     return newID;
 }
-
-int secondContactLog(userData* user_data) {
-    struct tm timeOfBirth_formated;
-    localtime_r(&(user_data->timeOfBirth), &timeOfBirth_formated);
-
-    char timeBuffer[64];
-    strftime(timeBuffer, sizeof(timeBuffer), "%Y-%m-%d %H:%M:%S", &timeOfBirth_formated);
-
-    cJSON *json = cJSON_CreateObject();
-    cJSON_AddStringToObject(json, "event", "sign-in");
-    cJSON_AddStringToObject(json, "id", user_data->id);
-    cJSON_AddStringToObject(json, "time", timeBuffer);
-    cJSON_AddStringToObject(json, "ip", user_data->ip);
-    cJSON_AddStringToObject(json, "username", user_data->username);
-    cJSON_AddStringToObject(json, "password", user_data->password);
-    char *json_str = cJSON_Print(json);
-
-    FILE *fp = fopen("events.json", "a");
-    if (fp == NULL) {
-        printf("Error: Unable to open the file.\n");
-        return 1;
-    }
-    printf("%s\n", json_str);
-    fputs(json_str, fp);
-    fclose(fp);
-
-    cJSON_free(json_str);
-    cJSON_Delete(json);
-    return 0;
-}
-
-int firstContactLog(userData* user_data) {
-
-    struct tm timeOfBirth_formated;
-    localtime_r(&(user_data->timeOfBirth), &timeOfBirth_formated);
-
-    char timeBuffer[64];
-    strftime(timeBuffer, sizeof(timeBuffer), "%Y-%m-%d %H:%M:%S", &timeOfBirth_formated);
-
-    cJSON *json = cJSON_CreateObject();
-    cJSON_AddStringToObject(json, "event", "connection");
-    cJSON_AddStringToObject(json, "id", user_data->id);
-    cJSON_AddStringToObject(json, "time", timeBuffer);
-    cJSON_AddStringToObject(json, "ip", user_data->ip);
-
-    char *json_str = cJSON_Print(json);
-
-    FILE *fp = fopen("events.json", "a");
-    if (fp == NULL) {
-        printf("Error: Unable to open the file.\n");
-        return 1;
-    }
-    printf("%s\n", json_str);
-    fputs(json_str, fp);
-    fclose(fp);
-
-    cJSON_free(json_str);
-    cJSON_Delete(json);
-    return 0;
-}
-
-/*
-    struct tm timeOfBirth_formated;
-    localtime_r(&(user_data->timeOfBirth), &timeOfBirth_formated);
-
-    char buffer[64];
-    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &timeOfBirth_formated);
-
-
-    FILE* file = fopen("connLog", "a");
-    if (file == NULL) {
-        printf("ERROR: Failed to open first contact log file\n");
-        return 1;
-    }
-    fprintf(file, "%d:%s:%s:%s\n", user_data->id, buffer, user_data->ip, user_data->keyAlgo);
-    fclose(file);
-
-    return 0;
-    */
-
-char* whatIsMyIP(int clientFD) {
-    struct sockaddr_in addr;
-    socklen_t addr_size = sizeof(struct sockaddr_in);
-    int res = getpeername(clientFD, (struct sockaddr *)&addr, &addr_size);
-    if (res == -1) {
-        printf("ERROR: This is not my IP\n");
-        return NULL;
-    }
-    char *clientip = malloc(INET_ADDRSTRLEN);
-    strcpy(clientip, inet_ntoa(addr.sin_addr));
-    return clientip;
-}
-
-int kotlic_ChannelCloseCallback(WOLFSSH_CHANNEL* channel, void* ctx) {
-    printf("CHANNEL WILL BE CLOSED\n");
-    return 0;
-}
-
-int kotlic_ChannelEOFCallback(WOLFSSH_CHANNEL* channel, void* ctx) {
-    printf("CHANNEL REACHED CONCLUSSION\n");
-    return 0;
-}
-
-int kotlic_ChannelOpenCallback(WOLFSSH_CHANNEL* channel, void* ctx) {
-    printf("CHANNEL WILL BE OPENNED\n");
-    return 0;
-}
-
-int kotlic_ChannelRequestCallback(WOLFSSH_CHANNEL* channel, void* ctx) {
-    printf("CHANNEL REQUEST RECIEVED\n");
-    return 0;
-}
-
-int kotlic_UserAuthCallback(byte authType, WS_UserAuthData* authData, void* ctx) {
-    printf("Auth type: %d\n", authType);
-    if (authType == WOLFSSH_USERAUTH_KEYBOARD) return WOLFSSH_USERAUTH_FAILURE;
-    userData* user_data = ctx;
-    if (authType == WOLFSSH_USERAUTH_PUBLICKEY) {
-        WS_UserAuthData_PublicKey auth_data_public_key = authData->sf.publicKey;
-
-        char* keyerWord = malloc(auth_data_public_key.publicKeyTypeSz+1);
-        memcpy(keyerWord, (const char *) auth_data_public_key.publicKeyType, auth_data_public_key.publicKeyTypeSz);
-        keyerWord[auth_data_public_key.publicKeyTypeSz] = '\0';
-        user_data->keyAlgo = keyerWord;
-
-        return WOLFSSH_USERAUTH_FAILURE;
-    }
-    WS_UserAuthData_Password auth_data_password = authData->sf.password;
-
-    char* useringWord = malloc(authData->usernameSz+1);
-    strncpy(useringWord, (const char *) authData->username, authData->usernameSz);
-    useringWord[authData->usernameSz] = '\0';
-    user_data->username = useringWord;
-
-    char* passingWord = malloc(auth_data_password.passwordSz+1);
-    memcpy(passingWord, (const char *) auth_data_password.password, auth_data_password.passwordSz);
-    passingWord[auth_data_password.passwordSz] = '\0';
-    user_data->password = passingWord;
-
-    int logStatus = secondContactLog(user_data);
-    if (logStatus != 0) {
-        printf("ERROR: Failed to preform first contact log\n");
-    }
-    return WOLFSSH_USERAUTH_SUCCESS;
-}
-
-
 
 int sock_maker() {
 
@@ -309,7 +182,7 @@ int key_master(WOLFSSH_CTX*wolfssh_ctx, const char* name) {
 
     int ret = wolfSSH_CTX_UsePrivateKey_buffer(wolfssh_ctx, keyData, keySize, WOLFSSH_FORMAT_ASN1);
     free(keyData);
-    free((void*) typeData);
+    //free((void*) typeData);
 
     if (ret != WS_SUCCESS) {
         printf("wolfSSH_CTX_UsePrivateKey_buffer failed: %d\n", ret);
@@ -322,8 +195,12 @@ int key_master(WOLFSSH_CTX*wolfssh_ctx, const char* name) {
 int main(int argc, char* args[]) {
     setvbuf(stdout, NULL, _IONBF, 0);
     signal(SIGINT, signal_catcher);
+    signal(SIGCHLD, SIG_IGN);
 
-    serverData server_data;
+    srand(time(NULL));
+
+    server_data.isOver = 0;
+
     server_data.ipAddress = 0;
     server_data.port = 22;
     server_data.socketFD = sock_maker();
@@ -359,6 +236,11 @@ int main(int argc, char* args[]) {
     socklen_t clientSize = sizeof(struct sockaddr_in);
     while (1) {
         clientFD = accept(server_data.socketFD, (struct sockaddr *) &clientSock, &clientSize);
+        if (clientFD < 0) {
+            printf("WE ARE FUCKEEDDDDD\n");
+            return 1;
+        }
+
         int vilca = fork();
         if (vilca < 0) {
             break;
@@ -393,22 +275,24 @@ int main(int argc, char* args[]) {
             printf("FAILURE: %s\n", wolfSSH_get_error_name(server_data.wolfServer));
         }
 
-        int communication = -1;
-        int bashInstance = basher3_ItsBash(&communication);
-        if (bashInstance < 0) {
+        server_data.bashCommunicator = -1;
+        server_data.bashInstance = basher3_ItsBash(&server_data.bashCommunicator);
+
+        if (server_data.bashInstance < 0) {
             printf("ERROR: Fork operation failed during bash execution\n");
         }
-        if (communication < 0) {
+        if (server_data.bashCommunicator < 0) {
             printf("ERROR: Communication point could not be established\n");
             return 0;
         }
 
-        byte channelBuffer[1024];
-        while (1) {
-            ret = wolfSSH_stream_read(server_data.wolfServer, channelBuffer, sizeof(channelBuffer));
-            if (ret > 0) {
-                printf("%s\n", (char*) channelBuffer);
-            }
+        pthread_t reader;
+        pthread_t writer;
+
+        pthread_create(&reader, NULL, read_pass, NULL);
+        pthread_create(&writer, NULL, write_pass, NULL);
+
+        while (!server_data.isOver) {
         }
         
         wolfSSH_free(server_data.wolfServer);
