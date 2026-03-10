@@ -42,12 +42,25 @@ void signal_catcher(int signal) {
     close(server_data.socketFD);
     wolfSSH_CTX_free(server_data.wolfContext);
     if (server_data.wolfServer) wolfSSH_free(server_data.wolfServer);
+    if (server_data.bashCommunicator) {
+        close(server_data.bashCommunicator);
+        sleep(2);
+    }
+    if (server_data.bashInstance) kill(server_data.bashInstance, SIGTERM);
     wolfSSH_Cleanup();
-    //exit(1);
+    exit(130);
+}
+
+int kill_all_user_data(userData* billData) {
+    if (billData->id) free(billData->id);
+    if (billData->ip) free(billData->ip);
+    if (billData->keyAlgo) free(billData->keyAlgo);
+    if (billData->username) free(billData->username);
+    if (billData->password) free(billData->password);
+    return 0;
 }
 
 void* read_pass(void* args) {
-
     byte channelBuffer[1024];
     while (1) {
         int ret = wolfSSH_stream_read(server_data.wolfServer, channelBuffer, sizeof(channelBuffer));
@@ -61,8 +74,10 @@ void* read_pass(void* args) {
         }
         if (ret < 0) {
             printf("the value of ret is less than 0 - RRRR\n");
+            break;
         }
     }
+    return NULL;
 }
 
 void* write_pass(void* args) {
@@ -79,8 +94,10 @@ void* write_pass(void* args) {
         }
         if (ret < 0) {
             printf("the value of ret is less than 0 - WWWW\n");
+            break;
         }
     }
+    return NULL;
 }
 
 int basher3_ItsBash(int *master) {
@@ -106,14 +123,6 @@ int basher3_ItsBash(int *master) {
 
 }
 
-int kill_all_user_data(userData* billData) {
-    if (billData->id) free(billData->id);
-    if (billData->ip) free(billData->ip);
-    if (billData->keyAlgo) free(billData->keyAlgo);
-    if (billData->username) free(billData->username);
-    if (billData->password) free(billData->password);
-    return 0;
-}
 
 char* generate_session_id(int length) {
     char* newID = malloc(length+1);
@@ -226,10 +235,10 @@ int main(int argc, char* args[]) {
     int keyStatus = key_master(server_data.wolfContext, keyFile);
     if (keyStatus != WS_SUCCESS) {
         printf("ERROR: WE ARE COOKED IF 1\n1");
+        wolfSSH_CTX_free(server_data.wolfContext);
+        wolfSSH_Cleanup();
         return keyStatus;
     }
-
-    int id = 0;
 
     int clientFD;
     struct sockaddr_in clientSock;
@@ -237,16 +246,19 @@ int main(int argc, char* args[]) {
     while (1) {
         clientFD = accept(server_data.socketFD, (struct sockaddr *) &clientSock, &clientSize);
         if (clientFD < 0) {
-            printf("WE ARE FUCKEEDDDDD\n");
-            return 1;
+            printf("ERROR: Failed to accept connection\n");
+            continue;
         }
 
         int vilca = fork();
         if (vilca < 0) {
-            break;
+            printf("ERROR: Failed to launch fork operation on accepted connection\n");
+            wolfSSH_free(server_data.wolfServer);
+            wolfSSH_CTX_free(server_data.wolfContext);
+            wolfSSH_Cleanup();
+            return 1;
         }
         if (vilca > 0) {
-            id++;
             continue;
         }
 
@@ -280,9 +292,18 @@ int main(int argc, char* args[]) {
 
         if (server_data.bashInstance < 0) {
             printf("ERROR: Fork operation failed during bash execution\n");
+            wolfSSH_free(server_data.wolfServer);
+            wolfSSH_CTX_free(server_data.wolfContext);
+            wolfSSH_Cleanup();
+            kill_all_user_data(&user_data);
+            return 0;
         }
         if (server_data.bashCommunicator < 0) {
             printf("ERROR: Communication point could not be established\n");
+            wolfSSH_free(server_data.wolfServer);
+            wolfSSH_CTX_free(server_data.wolfContext);
+            wolfSSH_Cleanup();
+            kill_all_user_data(&user_data);
             return 0;
         }
 
@@ -296,10 +317,9 @@ int main(int argc, char* args[]) {
         }
         
         wolfSSH_free(server_data.wolfServer);
-        break;
+        wolfSSH_CTX_free(server_data.wolfContext);
+        wolfSSH_Cleanup();
+        kill_all_user_data(&user_data);
+        return 0;
     }
-
-    wolfSSH_CTX_free(server_data.wolfContext);
-    wolfSSH_Cleanup();
-    return 0;
 }
