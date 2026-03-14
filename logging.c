@@ -63,7 +63,7 @@ int secondContactLog(userData* user_data) {
     cJSON_AddStringToObject(json, "ip", user_data->ip);
     cJSON_AddStringToObject(json, "username", user_data->username);
     cJSON_AddStringToObject(json, "password", user_data->password);
-    char *json_str = cJSON_Print(json);
+    char *json_str = cJSON_PrintUnformatted(json);
 
     FILE *fp = fopen("events.json", "a");
     if (fp == NULL) {
@@ -93,7 +93,7 @@ int firstContactLog(userData* user_data) {
     cJSON_AddStringToObject(json, "time", timeBuffer);
     cJSON_AddStringToObject(json, "ip", user_data->ip);
 
-    char *json_str = cJSON_Print(json);
+    char *json_str = cJSON_PrintUnformatted(json);
 
     FILE *fp = fopen("events.json", "a");
     if (fp == NULL) {

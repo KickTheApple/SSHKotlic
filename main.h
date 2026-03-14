@@ -1,6 +1,10 @@
 //
 // Created by domenic on 3/7/26.
 //
+#pragma once
+
+#include <pcap.h>
+#include <hiredis/hiredis.h>
 
 #ifndef SSHKOTLIC_MAIN_H
 #define SSHKOTLIC_MAIN_H
@@ -8,6 +12,11 @@
 struct serveringData {
     WOLFSSH* wolfServer;
     WOLFSSH_CTX* wolfContext;
+
+    redisContext* redisConn;
+
+    pcap_t* pcapHandle;
+    pcap_dumper_t* pcapDumper;
 
     int bashInstance;
     int bashCommunicator;
@@ -26,6 +35,8 @@ struct useringData {
     char* keyAlgo;
     char* username;
     char* password;
+
+    char* containerID;
 } typedef userData;
 
 void* read_pass(void* args);
