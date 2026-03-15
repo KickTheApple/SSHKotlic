@@ -27,28 +27,49 @@
 #include <pty.h>
 #include <time.h>
 #include <signal.h>
+#include <sys/inotify.h>
 #include <arpa/inet.h>
 #include <poll.h>
 #include <cjson/cJSON.h>
+#include <wait.h>
 #include <pthread.h>
+#include <hiredis/hiredis.h>
 
 #include "callbacks.h"
 #include "logging.h"
 #include "main.h"
 
 serverData server_data;
+userData user_data;
 
-void signal_catcher(int signal) {
-    close(server_data.socketFD);
-    wolfSSH_CTX_free(server_data.wolfContext);
-    if (server_data.wolfServer) wolfSSH_free(server_data.wolfServer);
-    if (server_data.bashCommunicator) {
-        close(server_data.bashCommunicator);
-        sleep(2);
+void got_packet(u_char* args, const struct pcap_pkthdr* header, const u_char* packet) {
+    pcap_dump((u_char*) server_data.pcapDumper, header, packet);
+}
+
+int stop_container(char* containerID) {
+    int spork = fork();
+    if (spork == 0) {
+        execl("/usr/bin/docker", "docker", "stop", containerID, (char*) NULL);
+        exit(1);
     }
-    if (server_data.bashInstance) kill(server_data.bashInstance, SIGTERM);
-    wolfSSH_Cleanup();
-    exit(130);
+    waitpid(spork, NULL, 0);
+    return 0;
+}
+
+int start_container(int* master, char* containerID) {
+    int masterPd;
+    int forky = forkpty(&masterPd, NULL, NULL, NULL);
+    if (forky == -1) {
+        printf("Problem with Smoking Pipes\n");
+        return -1;
+    }
+    if (forky == 0) {
+        execl("/usr/bin/docker", "docker", "start", "-ai", containerID, (char *) NULL);
+        printf("bin bang bash error\n");
+        exit(1);
+    }
+    *master = masterPd;
+    return forky;
 }
 
 int kill_all_user_data(userData* billData) {
@@ -57,7 +78,109 @@ int kill_all_user_data(userData* billData) {
     if (billData->keyAlgo) free(billData->keyAlgo);
     if (billData->username) free(billData->username);
     if (billData->password) free(billData->password);
+    if (billData->containerID) free(billData->containerID);
     return 0;
+}
+
+void signal_catcher(int signal) {
+    close(server_data.socketFD);
+    wolfSSH_CTX_free(server_data.wolfContext);
+    if (server_data.wolfServer) {
+        if (server_data.bashCommunicator) {
+            wolfSSH_stream_exit(server_data.wolfServer, 130);
+            close(server_data.bashCommunicator);
+            sleep(2);
+        }
+        wolfSSH_free(server_data.wolfServer);
+    }
+    if (server_data.bashInstance) stop_container(user_data.containerID);
+    wolfSSH_Cleanup();
+    pcap_dump_close(server_data.pcapDumper);
+    pcap_close(server_data.pcapHandle);
+    redisFree(server_data.redisConn);
+    kill_all_user_data(&user_data);
+    exit(130);
+}
+
+int shutdown_routine_yes_user(userData* bill_data) {
+    if (server_data.bashInstance) stop_container(bill_data->containerID);
+    wolfSSH_free(server_data.wolfServer);
+    wolfSSH_CTX_free(server_data.wolfContext);
+    wolfSSH_Cleanup();
+    pcap_dump_close(server_data.pcapDumper);
+    pcap_close(server_data.pcapHandle);
+    redisFree(server_data.redisConn);
+    kill_all_user_data(bill_data);
+    return 0;
+}
+
+int shutdown_routine_no_user() {
+    wolfSSH_free(server_data.wolfServer);
+    wolfSSH_CTX_free(server_data.wolfContext);
+    wolfSSH_Cleanup();
+    pcap_dump_close(server_data.pcapDumper);
+    pcap_close(server_data.pcapHandle);
+    redisFree(server_data.redisConn);
+    return 0;
+}
+
+char* get_redis_entry(char* key) {
+    char* redis_value = malloc(65);
+
+    redisReply* reply = redisCommand(server_data.redisConn, "get %s", key);
+    printf("%s\n", key);
+    if (reply == NULL) {
+        printf("Redis Reply couldn't have been created\n");
+        free(redis_value);
+        return NULL;
+    }
+    if (reply->str == NULL) {
+        printf("Redis entry not found\n");
+        freeReplyObject(reply);
+        free(redis_value);
+        return NULL;
+    }
+    printf("%s\n", reply->str);
+    memcpy(redis_value, reply->str, reply->len < 64 ? reply->len : 64);
+    redis_value[reply->len < 64 ? reply->len : 64] = '\0';
+
+    freeReplyObject(reply);
+    printf("Redis entry successfully found\n");
+    return redis_value;
+}
+
+int is_redis_entry(char* key) {
+    printf("DO WE GET HERE\n");
+    redisReply* reply = redisCommand(server_data.redisConn, "get %s", key);
+    printf("%s\n", key);
+    if (reply == NULL) {
+        printf("WE DO DO NOT HAVE\n");
+        return -1;
+    }
+    if (reply->str == NULL) {
+        printf("We did not find value\n");
+        freeReplyObject(reply);
+        return 0;
+    }
+    printf("%s\n", reply->str);
+    freeReplyObject(reply);
+    printf("WE DO GET HERE\n");
+    return 1;
+}
+
+int create_redis_entry(char* key, char* value) {
+    redisReply* reply = redisCommand(server_data.redisConn, "set %s %s", key, value);
+    if (strcmp(reply->str, "OK") == 0) {
+        freeReplyObject(reply);
+        return 1;
+    }
+    freeReplyObject(reply);
+    return 0;
+}
+
+void *pcap_pass(void* args) {
+    pcap_loop(server_data.pcapHandle, 0, got_packet, NULL);
+    return NULL;
 }
 
 void* read_pass(void* args) {
@@ -94,33 +217,58 @@ void* write_pass(void* args) {
         }
         if (ret < 0) {
             printf("the value of ret is less than 0 - WWWW\n");
+            wolfSSH_stream_exit(server_data.wolfServer, 0);
             break;
         }
     }
+    server_data.isOver = 1;
     return NULL;
 }
 
-int basher3_ItsBash(int *master) {
+/*
+char* get_containerID(char* cidfile) {
+    int failCount = 0;
+    char* container_hash = malloc(65);
+    while (1) {
+        FILE* f = fopen(cidfile, "r");
+        if (!f) {
+            printf("FAILED TO OPEN %s\n", cidfile);
+            failCount++;
+            if (failCount == 50) {
+                free(container_hash);
+                return NULL;
+            }
+            usleep(100000);
+            continue;
+        }
+        size_t result = fread(container_hash, 1, 64, f);
+        if (result == 0) {
+            printf("Failed to read container hash id\n");
+            fclose(f);
+            usleep(100000);
+            continue;
+        }
+        printf("Success to read container hash id\n");
+        fclose(f);
+        return container_hash;
+    }
+}
+*/
 
+int basher3_ItsBash(int *master, char* filename_id) {
     int masterPd;
     int forky = forkpty(&masterPd, NULL, NULL, NULL);
-
     if (forky == -1) {
         printf("Problem with Smoking Pipes\n");
         return -1;
     }
-
     if (forky == 0) {
-
-        execl("/usr/bin/docker", "docker", "run", "-ti", "--rm", "--entrypoint", "/bin/sh", "--net", "none", "bash", "-i", (char *) NULL);
+        execl("/usr/bin/docker", "docker", "run", "-ti", "--name", filename_id, "--entrypoint", "/bin/sh", "--net", "none", "bash", "-i", (char *) NULL);
         printf("bin bang bash error\n");
         exit(1);
-
     }
-
     *master = masterPd;
     return forky;
-
 }
 
 
@@ -208,6 +356,53 @@ int main(int argc, char* args[]) {
 
     srand(time(NULL));
 
+    server_data.redisConn = redisConnect("127.0.0.1", 6379);
+    if (server_data.redisConn  == NULL || server_data.redisConn ->err) {
+        if (server_data.redisConn) {
+            printf("Connection error: %s", server_data.redisConn ->errstr);
+            redisFree(server_data.redisConn );
+        } else {
+            printf("Connection error: can't allocate redis context");
+        }
+        return 1;
+    }
+
+    char errbuf[PCAP_ERRBUF_SIZE];
+    server_data.pcapHandle = pcap_open_live("any", BUFSIZ, 1, 1000, errbuf);
+    if (server_data.pcapHandle == NULL) {
+        printf("ERROR: Couldn't open device for packet listening: %s\n", errbuf);
+        redisFree(server_data.redisConn);
+        return 1;
+    }
+
+    struct bpf_program fp;
+    if (pcap_compile(server_data.pcapHandle, &fp, "port 22", 0, PCAP_NETMASK_UNKNOWN) == -1) {
+        printf("ERROR: Couldn't parse filter for PCAP: %s\n", pcap_geterr(server_data.pcapHandle));
+        pcap_close(server_data.pcapHandle);
+        redisFree(server_data.redisConn);
+        return 1;
+    }
+
+    if (pcap_setfilter(server_data.pcapHandle, &fp) == -1) {
+        printf("ERROR: Couldn't attach filter to network listener: %s\n", pcap_geterr(server_data.pcapHandle));
+        pcap_freecode(&fp);
+        pcap_close(server_data.pcapHandle);
+        redisFree(server_data.redisConn);
+        return 1;
+    }
+    pcap_freecode(&fp);
+
+    server_data.pcapDumper = pcap_dump_open(server_data.pcapHandle, "packets.pcap");
+    if (server_data.pcapDumper == NULL) {
+        printf("ERROR: Couldn't instancialize the dumper: %s\n", pcap_geterr(server_data.pcapHandle));
+        pcap_close(server_data.pcapHandle);
+        redisFree(server_data.redisConn);
+        return 1;
+    }
+
+    pthread_t networker;
+    pthread_create(&networker, NULL, pcap_pass, NULL);
+
     server_data.isOver = 0;
 
     server_data.ipAddress = 0;
@@ -215,6 +410,9 @@ int main(int argc, char* args[]) {
     server_data.socketFD = sock_maker();
     if (server_data.socketFD == -1) {
         printf("SERVER TERMINATED\n");
+        pcap_dump_close(server_data.pcapDumper);
+        pcap_close(server_data.pcapHandle);
+        redisFree(server_data.redisConn);
         return 1;
     }
 
@@ -235,8 +433,13 @@ int main(int argc, char* args[]) {
     int keyStatus = key_master(server_data.wolfContext, keyFile);
     if (keyStatus != WS_SUCCESS) {
         printf("ERROR: WE ARE COOKED IF 1\n1");
+        close(server_data.socketFD);
         wolfSSH_CTX_free(server_data.wolfContext);
         wolfSSH_Cleanup();
+
+        pcap_dump_close(server_data.pcapDumper);
+        pcap_close(server_data.pcapHandle);
+        redisFree(server_data.redisConn);
         return keyStatus;
     }
 
@@ -253,19 +456,21 @@ int main(int argc, char* args[]) {
         int vilca = fork();
         if (vilca < 0) {
             printf("ERROR: Failed to launch fork operation on accepted connection\n");
-            wolfSSH_free(server_data.wolfServer);
-            wolfSSH_CTX_free(server_data.wolfContext);
-            wolfSSH_Cleanup();
+            shutdown_routine_no_user();
             return 1;
         }
         if (vilca > 0) {
+            close(clientFD);
             continue;
         }
 
-        userData user_data;
         user_data.timeOfBirth = time(NULL);
         user_data.id = generate_session_id(10);
         user_data.ip = whatIsMyIP(clientFD);
+        user_data.keyAlgo = NULL;
+        user_data.username = NULL;
+        user_data.password = NULL;
+        user_data.containerID = NULL;
 
         int logStatus = firstContactLog(&user_data);
         if (logStatus != 0) {
@@ -287,24 +492,39 @@ int main(int argc, char* args[]) {
             printf("FAILURE: %s\n", wolfSSH_get_error_name(server_data.wolfServer));
         }
 
-        server_data.bashCommunicator = -1;
-        server_data.bashInstance = basher3_ItsBash(&server_data.bashCommunicator);
+        char* bashID = get_redis_entry(user_data.ip);
+        if (bashID == NULL) {
+            char* cidfile = malloc(65);
+            snprintf(cidfile, 65, "bashid_%s", user_data.id);
+            user_data.containerID = cidfile;
+
+            server_data.bashCommunicator = -1;
+            server_data.bashInstance = basher3_ItsBash(&server_data.bashCommunicator, user_data.containerID);
+        } else {
+            user_data.containerID = bashID;
+
+            server_data.bashCommunicator = -1;
+            server_data.bashInstance = start_container(&server_data.bashCommunicator, user_data.containerID);
+        }
 
         if (server_data.bashInstance < 0) {
             printf("ERROR: Fork operation failed during bash execution\n");
-            wolfSSH_free(server_data.wolfServer);
-            wolfSSH_CTX_free(server_data.wolfContext);
-            wolfSSH_Cleanup();
-            kill_all_user_data(&user_data);
+            shutdown_routine_yes_user(&user_data);
             return 0;
         }
         if (server_data.bashCommunicator < 0) {
             printf("ERROR: Communication point could not be established\n");
-            wolfSSH_free(server_data.wolfServer);
-            wolfSSH_CTX_free(server_data.wolfContext);
-            wolfSSH_Cleanup();
-            kill_all_user_data(&user_data);
+            shutdown_routine_yes_user(&user_data);
             return 0;
+        }
+
+        if (bashID == NULL) {
+            int redis_creation = create_redis_entry(user_data.ip, user_data.containerID);
+            if (!redis_creation) {
+                printf("Redis couldn't create a new entry");
+                shutdown_routine_yes_user(&user_data);
+                return 1;
+            }
         }
 
         pthread_t reader;
@@ -315,11 +535,8 @@ int main(int argc, char* args[]) {
 
         while (!server_data.isOver) {
         }
-        
-        wolfSSH_free(server_data.wolfServer);
-        wolfSSH_CTX_free(server_data.wolfContext);
-        wolfSSH_Cleanup();
-        kill_all_user_data(&user_data);
+
+        shutdown_routine_yes_user(&user_data);
         return 0;
     }
 }
