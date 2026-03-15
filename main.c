@@ -42,6 +42,10 @@
 serverData server_data;
 userData user_data;
 
+void got_packet(u_char* args, const struct pcap_pkthdr* header, const u_char* packet) {
+    pcap_dump((u_char*) server_data.pcapDumper, header, packet);
+}
+
 int stop_container(char* containerID) {
     int spork = fork();
     if (spork == 0) {
@@ -91,6 +95,8 @@ void signal_catcher(int signal) {
     }
     if (server_data.bashInstance) stop_container(user_data.containerID);
     wolfSSH_Cleanup();
+    pcap_dump_close(server_data.pcapDumper);
+    pcap_close(server_data.pcapHandle);
     redisFree(server_data.redisConn);
     kill_all_user_data(&user_data);
     exit(130);
@@ -101,6 +107,8 @@ int shutdown_routine_yes_user(userData* bill_data) {
     wolfSSH_free(server_data.wolfServer);
     wolfSSH_CTX_free(server_data.wolfContext);
     wolfSSH_Cleanup();
+    pcap_dump_close(server_data.pcapDumper);
+    pcap_close(server_data.pcapHandle);
     redisFree(server_data.redisConn);
     kill_all_user_data(bill_data);
     return 0;
@@ -110,6 +118,8 @@ int shutdown_routine_no_user() {
     wolfSSH_free(server_data.wolfServer);
     wolfSSH_CTX_free(server_data.wolfContext);
     wolfSSH_Cleanup();
+    pcap_dump_close(server_data.pcapDumper);
+    pcap_close(server_data.pcapHandle);
     redisFree(server_data.redisConn);
     return 0;
 }
@@ -166,6 +176,11 @@ int create_redis_entry(char* key, char* value) {
     }
     freeReplyObject(reply);
     return 0;
+}
+
+void *pcap_pass(void* args) {
+    pcap_loop(server_data.pcapHandle, 0, got_packet, NULL);
+    return NULL;
 }
 
 void* read_pass(void* args) {
@@ -343,7 +358,7 @@ int main(int argc, char* args[]) {
 
     server_data.redisConn = redisConnect("127.0.0.1", 6379);
     if (server_data.redisConn  == NULL || server_data.redisConn ->err) {
-        if (server_data.redisConn ) {
+        if (server_data.redisConn) {
             printf("Connection error: %s", server_data.redisConn ->errstr);
             redisFree(server_data.redisConn );
         } else {
@@ -352,6 +367,42 @@ int main(int argc, char* args[]) {
         return 1;
     }
 
+    char errbuf[PCAP_ERRBUF_SIZE];
+    server_data.pcapHandle = pcap_open_live("any", BUFSIZ, 1, 1000, errbuf);
+    if (server_data.pcapHandle == NULL) {
+        printf("ERROR: Couldn't open device for packet listening: %s\n", errbuf);
+        redisFree(server_data.redisConn);
+        return 1;
+    }
+
+    struct bpf_program fp;
+    if (pcap_compile(server_data.pcapHandle, &fp, "port 22", 0, PCAP_NETMASK_UNKNOWN) == -1) {
+        printf("ERROR: Couldn't parse filter for PCAP: %s\n", pcap_geterr(server_data.pcapHandle));
+        pcap_close(server_data.pcapHandle);
+        redisFree(server_data.redisConn);
+        return 1;
+    }
+
+    if (pcap_setfilter(server_data.pcapHandle, &fp) == -1) {
+        printf("ERROR: Couldn't attach filter to network listener: %s\n", pcap_geterr(server_data.pcapHandle));
+        pcap_freecode(&fp);
+        pcap_close(server_data.pcapHandle);
+        redisFree(server_data.redisConn);
+        return 1;
+    }
+    pcap_freecode(&fp);
+
+    server_data.pcapDumper = pcap_dump_open(server_data.pcapHandle, "packets.pcap");
+    if (server_data.pcapDumper == NULL) {
+        printf("ERROR: Couldn't instancialize the dumper: %s\n", pcap_geterr(server_data.pcapHandle));
+        pcap_close(server_data.pcapHandle);
+        redisFree(server_data.redisConn);
+        return 1;
+    }
+
+    pthread_t networker;
+    pthread_create(&networker, NULL, pcap_pass, NULL);
+
     server_data.isOver = 0;
 
     server_data.ipAddress = 0;
@@ -359,6 +410,8 @@ int main(int argc, char* args[]) {
     server_data.socketFD = sock_maker();
     if (server_data.socketFD == -1) {
         printf("SERVER TERMINATED\n");
+        pcap_dump_close(server_data.pcapDumper);
+        pcap_close(server_data.pcapHandle);
         redisFree(server_data.redisConn);
         return 1;
     }
@@ -383,6 +436,9 @@ int main(int argc, char* args[]) {
         close(server_data.socketFD);
         wolfSSH_CTX_free(server_data.wolfContext);
         wolfSSH_Cleanup();
+
+        pcap_dump_close(server_data.pcapDumper);
+        pcap_close(server_data.pcapHandle);
         redisFree(server_data.redisConn);
         return keyStatus;
     }

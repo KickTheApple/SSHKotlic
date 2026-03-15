@@ -17,4 +17,5 @@ target_link_libraries(SSHKotlic
         wolfssl
         cjson
         hiredis
+        pcap
 )
