@@ -35,6 +35,7 @@
 #include <pthread.h>
 #include <hiredis/hiredis.h>
 
+#include "container.h"
 #include "callbacks.h"
 #include "logging.h"
 #include "main.h"
@@ -42,37 +43,9 @@
 serverData server_data;
 userData user_data;
 
-void got_packet(u_char* args, const struct pcap_pkthdr* header, const u_char* packet) {
-    pcap_dump((u_char*) server_data.pcapDumper, header, packet);
-}
-
-int stop_container(char* containerID) {
-    int spork = fork();
-    if (spork == 0) {
-        execl("/usr/bin/docker", "docker", "stop", containerID, (char*) NULL);
-        exit(1);
-    }
-    waitpid(spork, NULL, 0);
-    return 0;
-}
-
-int start_container(int* master, char* containerID) {
-    int masterPd;
-    int forky = forkpty(&masterPd, NULL, NULL, NULL);
-    if (forky == -1) {
-        printf("Problem with Smoking Pipes\n");
-        return -1;
-    }
-    if (forky == 0) {
-        execl("/usr/bin/docker", "docker", "start", "-ai", containerID, (char *) NULL);
-        printf("bin bang bash error\n");
-        exit(1);
-    }
-    *master = masterPd;
-    return forky;
-}
-
 int kill_all_user_data(userData* billData) {
+    userData_log(billData, "connection_end");
+
     if (billData->id) free(billData->id);
     if (billData->ip) free(billData->ip);
     if (billData->keyAlgo) free(billData->keyAlgo);
@@ -178,6 +151,10 @@ int create_redis_entry(char* key, char* value) {
     return 0;
 }
 
+void got_packet(u_char* args, const struct pcap_pkthdr* header, const u_char* packet) {
+    pcap_dump((u_char*) server_data.pcapDumper, header, packet);
+}
+
 void *pcap_pass(void* args) {
     pcap_loop(server_data.pcapHandle, 0, got_packet, NULL);
     return NULL;
@@ -254,22 +231,6 @@ char* get_containerID(char* cidfile) {
     }
 }
 */
-
-int basher3_ItsBash(int *master, char* filename_id) {
-    int masterPd;
-    int forky = forkpty(&masterPd, NULL, NULL, NULL);
-    if (forky == -1) {
-        printf("Problem with Smoking Pipes\n");
-        return -1;
-    }
-    if (forky == 0) {
-        execl("/usr/bin/docker", "docker", "run", "-ti", "--name", filename_id, "--entrypoint", "/bin/sh", "--net", "none", "bash", "-i", (char *) NULL);
-        printf("bin bang bash error\n");
-        exit(1);
-    }
-    *master = masterPd;
-    return forky;
-}
 
 
 char* generate_session_id(int length) {
@@ -354,8 +315,6 @@ int main(int argc, char* args[]) {
     signal(SIGINT, signal_catcher);
     signal(SIGCHLD, SIG_IGN);
 
-    srand(time(NULL));
-
     server_data.redisConn = redisConnect("127.0.0.1", 6379);
     if (server_data.redisConn  == NULL || server_data.redisConn ->err) {
         if (server_data.redisConn) {
@@ -404,7 +363,6 @@ int main(int argc, char* args[]) {
     pthread_create(&networker, NULL, pcap_pass, NULL);
 
     server_data.isOver = 0;
-
     server_data.ipAddress = 0;
     server_data.port = 22;
     server_data.socketFD = sock_maker();
@@ -415,6 +373,8 @@ int main(int argc, char* args[]) {
         redisFree(server_data.redisConn);
         return 1;
     }
+
+    user_data.timeOfBirth = 0;
 
     wolfSSH_Init();
 
@@ -464,7 +424,10 @@ int main(int argc, char* args[]) {
             continue;
         }
 
-        user_data.timeOfBirth = time(NULL);
+        time_t timerOfStart = time(NULL);
+        srand(timerOfStart);
+
+        user_data.timeOfBirth = timerOfStart;
         user_data.id = generate_session_id(10);
         user_data.ip = whatIsMyIP(clientFD);
         user_data.keyAlgo = NULL;
@@ -472,7 +435,7 @@ int main(int argc, char* args[]) {
         user_data.password = NULL;
         user_data.containerID = NULL;
 
-        int logStatus = firstContactLog(&user_data);
+        int logStatus = userData_log(&user_data, "connection_start");
         if (logStatus != 0) {
             printf("ERROR: Failed to preform first contact log\n");
         }
@@ -497,11 +460,13 @@ int main(int argc, char* args[]) {
             char* cidfile = malloc(65);
             snprintf(cidfile, 65, "bashid_%s", user_data.id);
             user_data.containerID = cidfile;
+            userData_log(&user_data, "sign_in_first");
 
             server_data.bashCommunicator = -1;
-            server_data.bashInstance = basher3_ItsBash(&server_data.bashCommunicator, user_data.containerID);
+            server_data.bashInstance = create_container(&server_data.bashCommunicator, user_data.containerID);
         } else {
             user_data.containerID = bashID;
+            userData_log(&user_data, "sign_in_repeat");
 
             server_data.bashCommunicator = -1;
             server_data.bashInstance = start_container(&server_data.bashCommunicator, user_data.containerID);

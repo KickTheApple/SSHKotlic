@@ -49,20 +49,29 @@ char* whatIsMyIP(int clientFD) {
     return clientip;
 }
 
-int secondContactLog(userData* user_data) {
+int userData_log(userData* user_data, char* event_type) {
+
+    time_t current_time = time(NULL);
+    struct tm current_time_formated;
+    localtime_r(&current_time, &current_time_formated);
+    char currentBuffer[64];
+    strftime(currentBuffer, sizeof(currentBuffer), "%Y-%m-%d %H:%M:%S", &current_time_formated);
+
     struct tm timeOfBirth_formated;
     localtime_r(&(user_data->timeOfBirth), &timeOfBirth_formated);
-
-    char timeBuffer[64];
-    strftime(timeBuffer, sizeof(timeBuffer), "%Y-%m-%d %H:%M:%S", &timeOfBirth_formated);
+    char beginningBuffer[64];
+    strftime(beginningBuffer, sizeof(beginningBuffer), "%Y-%m-%d %H:%M:%S", &timeOfBirth_formated);
 
     cJSON *json = cJSON_CreateObject();
-    cJSON_AddStringToObject(json, "event", "sign-in");
-    cJSON_AddStringToObject(json, "id", user_data->id);
-    cJSON_AddStringToObject(json, "time", timeBuffer);
-    cJSON_AddStringToObject(json, "ip", user_data->ip);
-    cJSON_AddStringToObject(json, "username", user_data->username);
-    cJSON_AddStringToObject(json, "password", user_data->password);
+    cJSON_AddStringToObject(json, "event_name", event_type);
+    cJSON_AddStringToObject(json, "event_time", currentBuffer);
+
+    if (user_data->timeOfBirth) cJSON_AddStringToObject(json, "start_time", beginningBuffer);
+    if (user_data->id) cJSON_AddStringToObject(json, "id", user_data->id);
+    if (user_data->ip) cJSON_AddStringToObject(json, "ip", user_data->ip);
+    if (user_data->containerID) cJSON_AddStringToObject(json, "container", user_data->containerID);
+    if (user_data->username) cJSON_AddStringToObject(json, "username", user_data->username);
+    if (user_data->password) cJSON_AddStringToObject(json, "password", user_data->password);
     char *json_str = cJSON_PrintUnformatted(json);
 
     FILE *fp = fopen("events.json", "a");
@@ -71,37 +80,7 @@ int secondContactLog(userData* user_data) {
         return 1;
     }
     printf("%s\n", json_str);
-    fputs(json_str, fp);
-    fclose(fp);
-
-    cJSON_free(json_str);
-    cJSON_Delete(json);
-    return 0;
-}
-
-int firstContactLog(userData* user_data) {
-
-    struct tm timeOfBirth_formated;
-    localtime_r(&(user_data->timeOfBirth), &timeOfBirth_formated);
-
-    char timeBuffer[64];
-    strftime(timeBuffer, sizeof(timeBuffer), "%Y-%m-%d %H:%M:%S", &timeOfBirth_formated);
-
-    cJSON *json = cJSON_CreateObject();
-    cJSON_AddStringToObject(json, "event", "connection");
-    cJSON_AddStringToObject(json, "id", user_data->id);
-    cJSON_AddStringToObject(json, "time", timeBuffer);
-    cJSON_AddStringToObject(json, "ip", user_data->ip);
-
-    char *json_str = cJSON_PrintUnformatted(json);
-
-    FILE *fp = fopen("events.json", "a");
-    if (fp == NULL) {
-        printf("Error: Unable to open the file.\n");
-        return 1;
-    }
-    printf("%s\n", json_str);
-    fputs(json_str, fp);
+    fprintf(fp, "%s\n", json_str);
     fclose(fp);
 
     cJSON_free(json_str);

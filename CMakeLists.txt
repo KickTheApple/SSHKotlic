@@ -8,7 +8,9 @@ add_executable(SSHKotlic main.c
         logging.h
         logging.c
         callbacks.c
-        callbacks.h)
+        callbacks.h
+        container.c
+        container.h)
 
 target_link_directories(SSHKotlic PRIVATE /usr/local/lib)
 

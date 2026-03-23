@@ -85,7 +85,7 @@ int kotlic_UserAuthCallback(byte authType, WS_UserAuthData* authData, void* ctx)
     passingWord[auth_data_password.passwordSz] = '\0';
     user_data->password = passingWord;
 
-    int logStatus = secondContactLog(user_data);
+    int logStatus = userData_log(user_data, "auth_success");
     if (logStatus != 0) {
         printf("ERROR: Failed to preform first contact log\n");
     }
