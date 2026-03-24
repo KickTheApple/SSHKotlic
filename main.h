@@ -37,6 +37,7 @@ struct useringData {
     char* password;
 
     char* containerID;
+    FILE* bash_file;
 } typedef userData;
 
 void* read_pass(void* args);

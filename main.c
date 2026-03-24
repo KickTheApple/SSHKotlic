@@ -52,6 +52,7 @@ int kill_all_user_data(userData* billData) {
     if (billData->username) free(billData->username);
     if (billData->password) free(billData->password);
     if (billData->containerID) free(billData->containerID);
+    if (billData->bash_file) fclose(billData->bash_file);
     return 0;
 }
 
@@ -68,8 +69,8 @@ void signal_catcher(int signal) {
     }
     if (server_data.bashInstance) stop_container(user_data.containerID);
     wolfSSH_Cleanup();
-    pcap_dump_close(server_data.pcapDumper);
-    pcap_close(server_data.pcapHandle);
+    if (server_data.pcapDumper != NULL) pcap_dump_close(server_data.pcapDumper);
+    if (server_data.pcapHandle != NULL) pcap_close(server_data.pcapHandle);
     redisFree(server_data.redisConn);
     kill_all_user_data(&user_data);
     exit(130);
@@ -182,9 +183,17 @@ void* read_pass(void* args) {
 
 void* write_pass(void* args) {
     byte channelBuffer[1024];
+    char filename[64];
+    snprintf(filename, 64, "bashing/session_%s.log", user_data.id);
+    user_data.bash_file = fopen(filename, "w");
+    if (user_data.bash_file == NULL) {
+        printf("FAILED TO WRITE TO FILE\n");
+        return NULL;
+    }
     while (1) {
         long ret = read(server_data.bashCommunicator, channelBuffer, sizeof(channelBuffer));
         if (ret > 0) {
+            fwrite(channelBuffer, 1, ret, user_data.bash_file);
             printf("%s\n", (char*) channelBuffer);
             wolfSSH_stream_send(server_data.wolfServer, channelBuffer, ret);
             continue;
@@ -199,39 +208,10 @@ void* write_pass(void* args) {
         }
     }
     server_data.isOver = 1;
+    fclose(user_data.bash_file);
+    user_data.bash_file = NULL;
     return NULL;
 }
-
-/*
-char* get_containerID(char* cidfile) {
-    int failCount = 0;
-    char* container_hash = malloc(65);
-    while (1) {
-        FILE* f = fopen(cidfile, "r");
-        if (!f) {
-            printf("FAILED TO OPEN %s\n", cidfile);
-            failCount++;
-            if (failCount == 50) {
-                free(container_hash);
-                return NULL;
-            }
-            usleep(100000);
-            continue;
-        }
-        size_t result = fread(container_hash, 1, 64, f);
-        if (result == 0) {
-            printf("Failed to read container hash id\n");
-            fclose(f);
-            usleep(100000);
-            continue;
-        }
-        printf("Success to read container hash id\n");
-        fclose(f);
-        return container_hash;
-    }
-}
-*/
-
 
 char* generate_session_id(int length) {
     char* newID = malloc(length+1);
@@ -326,41 +306,8 @@ int main(int argc, char* args[]) {
         return 1;
     }
 
-    char errbuf[PCAP_ERRBUF_SIZE];
-    server_data.pcapHandle = pcap_open_live("any", BUFSIZ, 1, 1000, errbuf);
-    if (server_data.pcapHandle == NULL) {
-        printf("ERROR: Couldn't open device for packet listening: %s\n", errbuf);
-        redisFree(server_data.redisConn);
-        return 1;
-    }
-
-    struct bpf_program fp;
-    if (pcap_compile(server_data.pcapHandle, &fp, "port 22", 0, PCAP_NETMASK_UNKNOWN) == -1) {
-        printf("ERROR: Couldn't parse filter for PCAP: %s\n", pcap_geterr(server_data.pcapHandle));
-        pcap_close(server_data.pcapHandle);
-        redisFree(server_data.redisConn);
-        return 1;
-    }
-
-    if (pcap_setfilter(server_data.pcapHandle, &fp) == -1) {
-        printf("ERROR: Couldn't attach filter to network listener: %s\n", pcap_geterr(server_data.pcapHandle));
-        pcap_freecode(&fp);
-        pcap_close(server_data.pcapHandle);
-        redisFree(server_data.redisConn);
-        return 1;
-    }
-    pcap_freecode(&fp);
-
-    server_data.pcapDumper = pcap_dump_open(server_data.pcapHandle, "packets.pcap");
-    if (server_data.pcapDumper == NULL) {
-        printf("ERROR: Couldn't instancialize the dumper: %s\n", pcap_geterr(server_data.pcapHandle));
-        pcap_close(server_data.pcapHandle);
-        redisFree(server_data.redisConn);
-        return 1;
-    }
-
-    pthread_t networker;
-    pthread_create(&networker, NULL, pcap_pass, NULL);
+    server_data.pcapHandle = NULL;
+    server_data.pcapDumper = NULL;
 
     server_data.isOver = 0;
     server_data.ipAddress = 0;
@@ -439,6 +386,52 @@ int main(int argc, char* args[]) {
         if (logStatus != 0) {
             printf("ERROR: Failed to preform first contact log\n");
         }
+
+        char errbuf[PCAP_ERRBUF_SIZE];
+        server_data.pcapHandle = pcap_open_live("any", BUFSIZ, 1, 1000, errbuf);
+        if (server_data.pcapHandle == NULL) {
+            printf("ERROR: Couldn't open device for packet listening: %s\n", errbuf);
+            redisFree(server_data.redisConn);
+            return 1;
+        }
+
+        char filter_expr[128];
+        snprintf(filter_expr, sizeof(filter_expr),
+            "(src host %s and src port %d and dst port 22) or "
+            "(dst host %s and dst port %d and src port 22)",
+            user_data.ip, ntohs(clientSock.sin_port),
+            user_data.ip, ntohs(clientSock.sin_port)
+        );
+
+        struct bpf_program fp;
+        if (pcap_compile(server_data.pcapHandle, &fp, filter_expr, 0, PCAP_NETMASK_UNKNOWN) == -1) {
+            printf("ERROR: Couldn't parse filter for PCAP: %s\n", pcap_geterr(server_data.pcapHandle));
+            pcap_close(server_data.pcapHandle);
+            redisFree(server_data.redisConn);
+            return 1;
+        }
+
+        if (pcap_setfilter(server_data.pcapHandle, &fp) == -1) {
+            printf("ERROR: Couldn't attach filter to network listener: %s\n", pcap_geterr(server_data.pcapHandle));
+            pcap_freecode(&fp);
+            pcap_close(server_data.pcapHandle);
+            redisFree(server_data.redisConn);
+            return 1;
+        }
+        pcap_freecode(&fp);
+
+        char packet_filename[64];
+        snprintf(packet_filename, 64, "network/session_%s.pcap", user_data.id);
+        server_data.pcapDumper = pcap_dump_open(server_data.pcapHandle, packet_filename);
+        if (server_data.pcapDumper == NULL) {
+            printf("ERROR: Couldn't instancialize the dumper: %s\n", pcap_geterr(server_data.pcapHandle));
+            pcap_close(server_data.pcapHandle);
+            redisFree(server_data.redisConn);
+            return 1;
+        }
+
+        pthread_t networker;
+        pthread_create(&networker, NULL, pcap_pass, NULL);
 
         server_data.wolfServer = wolfSSH_new(server_data.wolfContext);
         wolfSSH_set_fd(server_data.wolfServer, clientFD);
