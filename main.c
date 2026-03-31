@@ -38,65 +38,11 @@
 #include "container.h"
 #include "callbacks.h"
 #include "logging.h"
+#include "shutdown.h"
 #include "main.h"
 
 serverData server_data;
 userData user_data;
-
-int kill_all_user_data(userData* billData) {
-    userData_log(billData, "connection_end");
-
-    if (billData->id) free(billData->id);
-    if (billData->ip) free(billData->ip);
-    if (billData->keyAlgo) free(billData->keyAlgo);
-    if (billData->username) free(billData->username);
-    if (billData->password) free(billData->password);
-    if (billData->containerID) free(billData->containerID);
-    if (billData->bash_file) fclose(billData->bash_file);
-    return 0;
-}
-
-void signal_catcher(int signal) {
-    close(server_data.socketFD);
-    wolfSSH_CTX_free(server_data.wolfContext);
-    if (server_data.wolfServer) {
-        if (server_data.bashCommunicator) {
-            wolfSSH_stream_exit(server_data.wolfServer, 130);
-            close(server_data.bashCommunicator);
-            sleep(2);
-        }
-        wolfSSH_free(server_data.wolfServer);
-    }
-    if (server_data.bashInstance) stop_container(user_data.containerID);
-    wolfSSH_Cleanup();
-    if (server_data.pcapDumper != NULL) pcap_dump_close(server_data.pcapDumper);
-    if (server_data.pcapHandle != NULL) pcap_close(server_data.pcapHandle);
-    redisFree(server_data.redisConn);
-    kill_all_user_data(&user_data);
-    exit(130);
-}
-
-int shutdown_routine_yes_user(userData* bill_data) {
-    if (server_data.bashInstance) stop_container(bill_data->containerID);
-    wolfSSH_free(server_data.wolfServer);
-    wolfSSH_CTX_free(server_data.wolfContext);
-    wolfSSH_Cleanup();
-    pcap_dump_close(server_data.pcapDumper);
-    pcap_close(server_data.pcapHandle);
-    redisFree(server_data.redisConn);
-    kill_all_user_data(bill_data);
-    return 0;
-}
-
-int shutdown_routine_no_user() {
-    wolfSSH_free(server_data.wolfServer);
-    wolfSSH_CTX_free(server_data.wolfContext);
-    wolfSSH_Cleanup();
-    pcap_dump_close(server_data.pcapDumper);
-    pcap_close(server_data.pcapHandle);
-    redisFree(server_data.redisConn);
-    return 0;
-}
 
 char* get_redis_entry(char* key) {
     char* redis_value = malloc(65);
@@ -184,7 +130,7 @@ void* read_pass(void* args) {
 void* write_pass(void* args) {
     byte channelBuffer[1024];
     char filename[64];
-    snprintf(filename, 64, "bashing/session_%s.log", user_data.id);
+    snprintf(filename, 64, "terminal/session_%s.log", user_data.id);
     user_data.bash_file = fopen(filename, "w");
     if (user_data.bash_file == NULL) {
         printf("FAILED TO WRITE TO FILE\n");
@@ -193,7 +139,11 @@ void* write_pass(void* args) {
     while (1) {
         long ret = read(server_data.bashCommunicator, channelBuffer, sizeof(channelBuffer));
         if (ret > 0) {
-            fwrite(channelBuffer, 1, ret, user_data.bash_file);
+            byte converted_channelBuffer[1025];
+            memcpy(converted_channelBuffer, channelBuffer, ret);
+            converted_channelBuffer[ret] = '\0';
+
+            bashinput_log(converted_channelBuffer, &user_data);
             printf("%s\n", (char*) channelBuffer);
             wolfSSH_stream_send(server_data.wolfServer, channelBuffer, ret);
             continue;

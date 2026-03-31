@@ -10,7 +10,12 @@ add_executable(SSHKotlic main.c
         callbacks.c
         callbacks.h
         container.c
-        container.h)
+        container.h
+        base64.c
+        base64.h
+        shutdown.c
+        shutdown.h
+)
 
 target_link_directories(SSHKotlic PRIVATE /usr/local/lib)
 

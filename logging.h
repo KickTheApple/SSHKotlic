@@ -8,6 +8,7 @@
 #include "main.h"
 
 char* whatIsMyIP(int clientFD);
+int bashinput_log(byte* data, userData* user_data);
 int userData_log(userData* user_data, char* event_type);
 
 #endif //SSHKOTLIC_LOGGING_H
