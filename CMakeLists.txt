@@ -15,6 +15,12 @@ add_executable(SSHKotlic main.c
         base64.h
         shutdown.c
         shutdown.h
+        lookup.c
+        lookup.h
+        concurrent.c
+        concurrent.h
+        generate.c
+        generate.h
 )
 
 target_link_directories(SSHKotlic PRIVATE /usr/local/lib)

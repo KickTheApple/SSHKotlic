@@ -5,6 +5,7 @@
 
 #include <pcap.h>
 #include <hiredis/hiredis.h>
+#include <wolfssh/ssh.h>
 
 #ifndef SSHKOTLIC_MAIN_H
 #define SSHKOTLIC_MAIN_H
@@ -39,10 +40,5 @@ struct useringData {
     char* containerID;
     FILE* bash_file;
 } typedef userData;
-
-void* read_pass(void* args);
-void* write_pass(void* args);
-int sock_maker();
-int key_master(WOLFSSH_CTX*wolfssh_ctx, const char* name);
 
 #endif //SSHKOTLIC_MAIN_H
