@@ -33,6 +33,7 @@ struct useringData {
     time_t timeOfBirth;
     char* id;
     char* ip;
+    int port;
     char* keyAlgo;
     char* username;
     char* password;

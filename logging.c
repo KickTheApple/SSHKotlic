@@ -8,16 +8,19 @@
 #include "logging.h"
 #include "base64.h"
 
-char* whatIsMyIP(int clientFD) {
+char* whatIsMyIP(int clientFD, userData* user_data) {
     struct sockaddr_in addr;
     socklen_t addr_size = sizeof(struct sockaddr_in);
     int res = getpeername(clientFD, (struct sockaddr *)&addr, &addr_size);
+
     if (res == -1) {
         printf("ERROR: This is not my IP\n");
         return NULL;
     }
     char *clientip = malloc(INET_ADDRSTRLEN);
     strcpy(clientip, inet_ntoa(addr.sin_addr));
+
+    user_data->port = addr.sin_port;
     return clientip;
 }
 
@@ -69,6 +72,7 @@ int userData_log(userData* user_data, char* event_type) {
     if (user_data->timeOfBirth) cJSON_AddStringToObject(json, "start_time", beginningBuffer);
     if (user_data->id) cJSON_AddStringToObject(json, "session_id", user_data->id);
     if (user_data->ip) cJSON_AddStringToObject(json, "src_ip", user_data->ip);
+    if (user_data->port) cJSON_AddNumberToObject(json, "src_port", user_data->port);
     if (user_data->containerID) cJSON_AddStringToObject(json, "container_id", user_data->containerID);
     if (user_data->username) cJSON_AddStringToObject(json, "username", user_data->username);
     if (user_data->password) cJSON_AddStringToObject(json, "password", user_data->password);

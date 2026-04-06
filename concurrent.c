@@ -21,6 +21,7 @@ void got_packet(u_char* args, const struct pcap_pkthdr* header, const u_char* pa
 
 void *pcap_thread(void* args) {
     pcap_loop(server_data.pcapHandle, 0, got_packet, NULL);
+    printf("THE TIME LOOP IS FINISHED\n");
     return NULL;
 }
 
@@ -29,7 +30,7 @@ void* read_thread(void* args) {
     while (1) {
         int ret = wolfSSH_stream_read(server_data.wolfServer, channelBuffer, sizeof(channelBuffer));
         if (ret > 0) {
-            printf("%s\n", (char*) channelBuffer);
+            //printf("%s\n", (char*) channelBuffer);
             write(server_data.bashCommunicator, channelBuffer, ret);
             continue;
         }
@@ -45,7 +46,7 @@ void* read_thread(void* args) {
 }
 
 void* write_thread(void* args) {
-    byte channelBuffer[1024];
+    byte channelBuffer[1025];
     char filename[64];
     snprintf(filename, 64, "terminal/session_%s.log", user_data.id);
     user_data.bash_file = fopen(filename, "w");
@@ -54,14 +55,12 @@ void* write_thread(void* args) {
         return NULL;
     }
     while (1) {
-        long ret = read(server_data.bashCommunicator, channelBuffer, sizeof(channelBuffer));
+        long ret = read(server_data.bashCommunicator, channelBuffer, sizeof(channelBuffer)-1);
         if (ret > 0) {
-            byte converted_channelBuffer[1025];
-            memcpy(converted_channelBuffer, channelBuffer, ret);
-            converted_channelBuffer[ret] = '\0';
+            channelBuffer[ret] = '\0';
 
-            bashinput_log(converted_channelBuffer, &user_data);
-            printf("%s\n", (char*) channelBuffer);
+            bashinput_log(channelBuffer, &user_data);
+            //printf("%s\n", (char*) channelBuffer);
             wolfSSH_stream_send(server_data.wolfServer, channelBuffer, ret);
             continue;
         }

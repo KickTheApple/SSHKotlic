@@ -99,7 +99,7 @@ int main(int argc, char* args[]) {
 
         user_data.timeOfBirth = timerOfStart;
         user_data.id = generate_session_id(10);
-        user_data.ip = whatIsMyIP(clientFD);
+        user_data.ip = whatIsMyIP(clientFD, &user_data);
         user_data.keyAlgo = NULL;
         user_data.username = NULL;
         user_data.password = NULL;
