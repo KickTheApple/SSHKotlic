@@ -41,36 +41,47 @@ void signal_catcher(int signal) {
     if (server_data.bashInstance) stop_container(user_data.containerID);
     wolfSSH_Cleanup();
 
-    if (server_data.pcapHandle != NULL) pcap_breakloop(server_data.pcapHandle);
+    if (server_data.pcapHandle != NULL && server_data.pcapDumper) {
+        pcap_breakloop(server_data.pcapHandle);
+        pthread_join(user_data.networker, NULL);
+    }
     if (server_data.pcapDumper != NULL) pcap_dump_close(server_data.pcapDumper);
     if (server_data.pcapHandle != NULL) pcap_close(server_data.pcapHandle);
     redisFree(server_data.redisConn);
+
+
+    curl_global_cleanup();
+
     kill_all_user_data(&user_data);
     exit(130);
 }
 
 int shutdown_routine_yes_user(userData* bill_data) {
     if (server_data.bashInstance) stop_container(bill_data->containerID);
-    wolfSSH_free(server_data.wolfServer);
+    close(server_data.socketFD);
+    if (server_data.wolfServer != NULL) wolfSSH_free(server_data.wolfServer);
     wolfSSH_CTX_free(server_data.wolfContext);
     wolfSSH_Cleanup();
 
-    pcap_breakloop(server_data.pcapHandle);
-    pcap_dump_close(server_data.pcapDumper);
-    pcap_close(server_data.pcapHandle);
+    if (server_data.pcapHandle != NULL && server_data.pcapDumper) {
+        pcap_breakloop(server_data.pcapHandle);
+        pthread_join(bill_data->networker, NULL);
+    }
+    if (server_data.pcapDumper != NULL) pcap_dump_close(server_data.pcapDumper);
+    if (server_data.pcapHandle != NULL) pcap_close(server_data.pcapHandle);
     redisFree(server_data.redisConn);
+    curl_global_cleanup();
+
     kill_all_user_data(bill_data);
     return 0;
 }
 
 int shutdown_routine_no_user() {
-    wolfSSH_free(server_data.wolfServer);
+    close(server_data.socketFD);
     wolfSSH_CTX_free(server_data.wolfContext);
     wolfSSH_Cleanup();
 
-    pcap_breakloop(server_data.pcapHandle);
-    pcap_dump_close(server_data.pcapDumper);
-    pcap_close(server_data.pcapHandle);
     redisFree(server_data.redisConn);
+    curl_global_cleanup();
     return 0;
 }

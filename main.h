@@ -40,6 +40,10 @@ struct useringData {
 
     char* containerID;
     FILE* bash_file;
+
+    pthread_t reader;
+    pthread_t writer;
+    pthread_t networker;
 } typedef userData;
 
 #endif //SSHKOTLIC_MAIN_H

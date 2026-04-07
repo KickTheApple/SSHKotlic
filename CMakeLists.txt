@@ -31,4 +31,5 @@ target_link_libraries(SSHKotlic
         cjson
         hiredis
         pcap
+        curl
 )

@@ -8,6 +8,46 @@
 #include "logging.h"
 #include "base64.h"
 
+int pcap_sender(userData* user_data) {
+
+    char filename[65];
+    snprintf(filename, 64, "network/session_%s.pcap", user_data->id);
+    CURL *curler = curl_easy_init();
+    if (!curler) {
+        printf("EASY FAIL SENDING OF PCAP\n");
+        return 1;
+    }
+
+    curl_easy_setopt(curler, CURLOPT_URL, "http://localhost:8000/datapot/api/pcap/upload/");
+    curl_mime *mime = curl_mime_init(curler);
+
+    curl_mimepart *title_part = curl_mime_addpart(mime);
+    curl_mime_name(title_part, "title");
+    curl_mime_data(title_part, user_data->id, CURL_ZERO_TERMINATED);
+
+    curl_mimepart *file_part = curl_mime_addpart(mime);
+    curl_mime_name(file_part, "file");
+    curl_mime_filedata(file_part, filename);
+
+    curl_easy_setopt(curler, CURLOPT_MIMEPOST, mime);
+    curl_easy_setopt(curler, CURLOPT_VERBOSE, 1L);
+
+    CURLcode result = curl_easy_perform(curler);
+    curl_mime_free(mime);
+    if (result != CURLE_OK) {
+        curl_easy_cleanup(curler);
+
+        printf("FAILURE SENDING OF PCAP\n");
+        return 1;
+    }
+
+    curl_easy_cleanup(curler);
+
+    printf("SUCCESSFUL SENDING OF PCAP\n");
+    return 0;
+
+}
+
 char* whatIsMyIP(int clientFD, userData* user_data) {
     struct sockaddr_in addr;
     socklen_t addr_size = sizeof(struct sockaddr_in);
@@ -81,6 +121,8 @@ int userData_log(userData* user_data, char* event_type) {
     FILE *fp = fopen("events.json", "a");
     if (fp == NULL) {
         printf("Error: Unable to open the file.\n");
+        cJSON_free(json_str);
+        cJSON_Delete(json);
         return 1;
     }
     printf("%s\n", json_str);

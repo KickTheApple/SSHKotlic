@@ -31,6 +31,7 @@ int main(int argc, char* args[]) {
 
     server_data.pcapHandle = NULL;
     server_data.pcapDumper = NULL;
+    server_data.wolfServer = NULL;
 
     server_data.isOver = 0;
     server_data.ipAddress = 0;
@@ -38,8 +39,15 @@ int main(int argc, char* args[]) {
     server_data.socketFD = generate_socketFD();
     if (server_data.socketFD == -1) {
         printf("SERVER TERMINATED\n");
-        pcap_dump_close(server_data.pcapDumper);
-        pcap_close(server_data.pcapHandle);
+        redisFree(server_data.redisConn);
+        return 1;
+    }
+
+    CURLcode result = curl_global_init(CURL_GLOBAL_ALL);
+    if (result != CURLE_OK) {
+        printf("ERROR: Couldn't start global curl\n");
+        close(server_data.socketFD);
+
         redisFree(server_data.redisConn);
         return 1;
     }
@@ -62,14 +70,9 @@ int main(int argc, char* args[]) {
 
     int keyStatus = generate_SSH_Key(server_data.wolfContext, keyFile);
     if (keyStatus != WS_SUCCESS) {
-        printf("ERROR: WE ARE COOKED IF 1\n1");
-        close(server_data.socketFD);
-        wolfSSH_CTX_free(server_data.wolfContext);
-        wolfSSH_Cleanup();
+        printf("ERROR: Failed to generate key\n");
 
-        pcap_dump_close(server_data.pcapDumper);
-        pcap_close(server_data.pcapHandle);
-        redisFree(server_data.redisConn);
+        shutdown_routine_no_user();
         return keyStatus;
     }
 
@@ -114,7 +117,7 @@ int main(int argc, char* args[]) {
         server_data.pcapHandle = pcap_open_live("any", BUFSIZ, 1, 1000, errbuf);
         if (server_data.pcapHandle == NULL) {
             printf("ERROR: Couldn't open device for packet listening: %s\n", errbuf);
-            redisFree(server_data.redisConn);
+            shutdown_routine_yes_user(&user_data);
             return 1;
         }
 
@@ -129,32 +132,28 @@ int main(int argc, char* args[]) {
         struct bpf_program fp;
         if (pcap_compile(server_data.pcapHandle, &fp, filter_expr, 0, PCAP_NETMASK_UNKNOWN) == -1) {
             printf("ERROR: Couldn't parse filter for PCAP: %s\n", pcap_geterr(server_data.pcapHandle));
-            pcap_close(server_data.pcapHandle);
-            redisFree(server_data.redisConn);
+            shutdown_routine_yes_user(&user_data);
             return 1;
         }
 
         if (pcap_setfilter(server_data.pcapHandle, &fp) == -1) {
             printf("ERROR: Couldn't attach filter to network listener: %s\n", pcap_geterr(server_data.pcapHandle));
             pcap_freecode(&fp);
-            pcap_close(server_data.pcapHandle);
-            redisFree(server_data.redisConn);
+            shutdown_routine_yes_user(&user_data);
             return 1;
         }
         pcap_freecode(&fp);
 
-        char packet_filename[64];
+        char packet_filename[65];
         snprintf(packet_filename, 64, "network/session_%s.pcap", user_data.id);
         server_data.pcapDumper = pcap_dump_open(server_data.pcapHandle, packet_filename);
         if (server_data.pcapDumper == NULL) {
             printf("ERROR: Couldn't instancialize the dumper: %s\n", pcap_geterr(server_data.pcapHandle));
-            pcap_close(server_data.pcapHandle);
-            redisFree(server_data.redisConn);
+            shutdown_routine_yes_user(&user_data);
             return 1;
         }
 
-        pthread_t networker;
-        pthread_create(&networker, NULL, pcap_thread, NULL);
+        pthread_create(&user_data.networker, NULL, pcap_thread, NULL);
 
         server_data.wolfServer = wolfSSH_new(server_data.wolfContext);
         wolfSSH_set_fd(server_data.wolfServer, clientFD);
@@ -169,6 +168,8 @@ int main(int argc, char* args[]) {
             printf("SUCCESS\n");
         } else {
             printf("FAILURE: %s\n", wolfSSH_get_error_name(server_data.wolfServer));
+            shutdown_routine_yes_user(&user_data);
+            return 1;
         }
 
         char* bashID = get_redis_entry(user_data.ip);
@@ -208,14 +209,11 @@ int main(int argc, char* args[]) {
             }
         }
 
-        pthread_t reader;
-        pthread_t writer;
+        pthread_create(&user_data.reader, NULL, read_thread, NULL);
+        pthread_create(&user_data.writer, NULL, write_thread, NULL);
 
-        pthread_create(&reader, NULL, read_thread, NULL);
-        pthread_create(&writer, NULL, write_thread, NULL);
-
-        while (!server_data.isOver) {
-        }
+        pthread_join(user_data.reader, NULL);
+        pthread_join(user_data.writer, NULL);
 
         shutdown_routine_yes_user(&user_data);
         return 0;

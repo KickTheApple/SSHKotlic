@@ -21,6 +21,7 @@ void got_packet(u_char* args, const struct pcap_pkthdr* header, const u_char* pa
 
 void *pcap_thread(void* args) {
     pcap_loop(server_data.pcapHandle, 0, got_packet, NULL);
+    pcap_sender(&user_data);
     printf("THE TIME LOOP IS FINISHED\n");
     return NULL;
 }
@@ -47,7 +48,7 @@ void* read_thread(void* args) {
 
 void* write_thread(void* args) {
     byte channelBuffer[1025];
-    char filename[64];
+    char filename[65];
     snprintf(filename, 64, "terminal/session_%s.log", user_data.id);
     user_data.bash_file = fopen(filename, "w");
     if (user_data.bash_file == NULL) {
@@ -73,7 +74,6 @@ void* write_thread(void* args) {
             break;
         }
     }
-    server_data.isOver = 1;
     fclose(user_data.bash_file);
     user_data.bash_file = NULL;
     return NULL;
