@@ -2,41 +2,8 @@
 // Created by domenic on 3/7/26.
 //
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <unctrl.h>
-#include <wolfssh/ssh.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <errno.h>
-#include <math.h>
-#include <wolfssl/wolfcrypt/hash.h>
-#include <wolfssl/wolfcrypt/coding.h>
-#include <wolfssl/wolfcrypt/wc_port.h>
-#include <wolfssl/wolfcrypt/asn.h>
-#include <wolfssl/wolfcrypt/asn_public.h>
-#include <wolfssl/wolfcrypt/error-crypt.h>
-#include <wolfssh/ssh.h>
-#include <wolfssh/wolfsftp.h>
-#include <wolfssh/agent.h>
-#include <wolfssh/port.h>
-#include <wolfssh/test.h>
-#include <wolfssl/wolfcrypt/ecc.h>
-#include <wolfssl/wolfcrypt/logging.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <pty.h>
-#include <time.h>
-#include <signal.h>
-#include <arpa/inet.h>
-#include <poll.h>
 #include "main.h"
 #include "logging.h"
-#include <cjson/cJSON.h>
-
 
 int kotlic_ChannelCloseCallback(WOLFSSH_CHANNEL* channel, void* ctx) {
     printf("CHANNEL WILL BE CLOSED\n");
@@ -85,7 +52,7 @@ int kotlic_UserAuthCallback(byte authType, WS_UserAuthData* authData, void* ctx)
     passingWord[auth_data_password.passwordSz] = '\0';
     user_data->password = passingWord;
 
-    int logStatus = secondContactLog(user_data);
+    int logStatus = userData_log(user_data, "auth_success");
     if (logStatus != 0) {
         printf("ERROR: Failed to preform first contact log\n");
     }

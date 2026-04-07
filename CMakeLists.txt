@@ -8,7 +8,20 @@ add_executable(SSHKotlic main.c
         logging.h
         logging.c
         callbacks.c
-        callbacks.h)
+        callbacks.h
+        container.c
+        container.h
+        base64.c
+        base64.h
+        shutdown.c
+        shutdown.h
+        lookup.c
+        lookup.h
+        concurrent.c
+        concurrent.h
+        generate.c
+        generate.h
+)
 
 target_link_directories(SSHKotlic PRIVATE /usr/local/lib)
 
@@ -18,4 +31,5 @@ target_link_libraries(SSHKotlic
         cjson
         hiredis
         pcap
+        curl
 )
