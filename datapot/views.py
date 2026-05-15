@@ -1,29 +1,21 @@
 import json
 import os.path
 from datetime import datetime, timezone
-from http.client import responses
-from django_opensearch_dsl import Document
-from django.shortcuts import render
-from django.http import HttpResponse, JsonResponse
 from django_opensearch_dsl.search import Search
 from requests import session
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
+from rest_framework.status import HTTP_401_UNAUTHORIZED
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from scapy.layers.l2 import CookedLinux
 from scapy.utils import PcapReader
 
 from datapot.documents import PoticaDocument
 from datapot.documents import BashDocument
 from datapot.serializers import LogSerializer, BashSerializer
 
-from django.shortcuts import render
 from .forms import UploadFileForm
 from scapy.layers.inet import IP, TCP
-import scapy
-
-
-# Create your views here.
 
 class SearchParams:
     startTime: str | None
@@ -55,7 +47,12 @@ class SearchParams:
         return chosen_ones
 
 class PcapView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def get(self, request: Request):
+        if not request.user.is_authenticated:
+            return Response({"status": "no auth"}, status=HTTP_401_UNAUTHORIZED)
+
         query_info = request.query_params
         if "session_id" not in query_info:
             return Response({
@@ -113,7 +110,12 @@ class PcapView(APIView):
         return Response({"status": "failure", "errors": form.errors}, status=400)
 
 class BashView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def get(self, request: Request):
+        if not request.user.is_authenticated:
+            return Response({"status": "no auth"}, status=HTTP_401_UNAUTHORIZED)
+
         query_info = request.query_params
         if "session_id" not in query_info:
             return Response({
@@ -137,6 +139,8 @@ class BashView(APIView):
         })
 
 class SessionView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def get(self, request: Request):
         query_info = request.query_params
         if "session_id" not in query_info:
@@ -161,7 +165,12 @@ class SessionView(APIView):
         })
 
 class LogsView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def get(self, request: Request):
+        if not request.user.is_authenticated:
+            return Response({"status": "no auth"}, status=HTTP_401_UNAUTHORIZED)
+
         query_info = request.query_params
         print(query_info)
 
@@ -196,6 +205,8 @@ class LogsView(APIView):
 
         session_set = []
         for hit in response:
+            if "session_id" not in hit:
+                continue
             sesh_id = hit["session_id"]
             if sesh_id not in session_set:
                 session_set.append(sesh_id)
