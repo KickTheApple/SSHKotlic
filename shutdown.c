@@ -41,15 +41,15 @@ void signal_catcher(int signal) {
     if (server_data.bashInstance) stop_container(user_data.containerID);
     wolfSSH_Cleanup();
 
-    if (server_data.pcapHandle != NULL && server_data.pcapDumper) {
+    if (server_data.pcapHandle != NULL && server_data.pcapDumper != NULL) {
         pcap_breakloop(server_data.pcapHandle);
         pthread_join(user_data.networker, NULL);
     }
     if (server_data.pcapDumper != NULL) pcap_dump_close(server_data.pcapDumper);
     if (server_data.pcapHandle != NULL) pcap_close(server_data.pcapHandle);
+    if (server_data.pcapHandle != NULL && server_data.pcapDumper != NULL) pcap_sender(&user_data);
+
     redisFree(server_data.redisConn);
-
-
     curl_global_cleanup();
 
     kill_all_user_data(&user_data);
@@ -63,12 +63,14 @@ int shutdown_routine_yes_user(userData* bill_data) {
     wolfSSH_CTX_free(server_data.wolfContext);
     wolfSSH_Cleanup();
 
-    if (server_data.pcapHandle != NULL && server_data.pcapDumper) {
+    if (server_data.pcapHandle != NULL && server_data.pcapDumper != NULL) {
         pcap_breakloop(server_data.pcapHandle);
         pthread_join(bill_data->networker, NULL);
     }
     if (server_data.pcapDumper != NULL) pcap_dump_close(server_data.pcapDumper);
     if (server_data.pcapHandle != NULL) pcap_close(server_data.pcapHandle);
+    if (server_data.pcapHandle != NULL && server_data.pcapDumper != NULL) pcap_sender(&user_data);
+
     redisFree(server_data.redisConn);
     curl_global_cleanup();
 

@@ -18,7 +18,7 @@ int pcap_sender(userData* user_data) {
         return 1;
     }
 
-    curl_easy_setopt(curler, CURLOPT_URL, "http://localhost:8000/datapot/api/pcap/upload/");
+    curl_easy_setopt(curler, CURLOPT_URL, "http://localhost:8000/datapot/api/pcap/");
     curl_mime *mime = curl_mime_init(curler);
 
     curl_mimepart *title_part = curl_mime_addpart(mime);

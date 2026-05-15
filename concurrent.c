@@ -21,7 +21,6 @@ void got_packet(u_char* args, const struct pcap_pkthdr* header, const u_char* pa
 
 void *pcap_thread(void* args) {
     pcap_loop(server_data.pcapHandle, 0, got_packet, NULL);
-    pcap_sender(&user_data);
     printf("THE TIME LOOP IS FINISHED\n");
     return NULL;
 }

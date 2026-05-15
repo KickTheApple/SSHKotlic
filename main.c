@@ -172,7 +172,9 @@ int main(int argc, char* args[]) {
             return 1;
         }
 
-        char* bashID = get_redis_entry(user_data.ip);
+        char container_field[65];
+        snprintf(container_field, 64, "%s-bash", user_data.ip);
+        char* bashID = get_redis_entry(container_field);
         if (bashID == NULL) {
             char* cidfile = malloc(65);
             snprintf(cidfile, 65, "bashid_%s", user_data.id);
@@ -201,7 +203,7 @@ int main(int argc, char* args[]) {
         }
 
         if (bashID == NULL) {
-            int redis_creation = create_redis_entry(user_data.ip, user_data.containerID);
+            int redis_creation = create_redis_entry(container_field, user_data.containerID);
             if (!redis_creation) {
                 printf("Redis couldn't create a new entry");
                 shutdown_routine_yes_user(&user_data);

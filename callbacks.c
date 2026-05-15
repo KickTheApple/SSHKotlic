@@ -4,6 +4,17 @@
 
 #include "main.h"
 #include "logging.h"
+#include "lookup.h"
+
+int is_credential_match(char* value) {
+    char validCombo[3][10] = {"admin", "root", "user"};
+    for (int i = 0; i < 3; i++) {
+        if (strcmp(value, validCombo[i]) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
 
 int kotlic_ChannelCloseCallback(WOLFSSH_CHANNEL* channel, void* ctx) {
     printf("CHANNEL WILL BE CLOSED\n");
@@ -52,9 +63,42 @@ int kotlic_UserAuthCallback(byte authType, WS_UserAuthData* authData, void* ctx)
     passingWord[auth_data_password.passwordSz] = '\0';
     user_data->password = passingWord;
 
-    int logStatus = userData_log(user_data, "auth_success");
+    char credential_field[65];
+    char credential_combo[33];
+    snprintf(credential_field, 64, "%s-cred", user_data->ip);
+    if (is_redis_entry(credential_field)) {
+        snprintf(credential_combo, 32, "%s:%s", user_data->username, user_data->password);
+        char* activated_credentials = get_redis_entry(credential_field);
+        if (strcmp(credential_combo, activated_credentials) == 0) {
+            free(activated_credentials);
+            int logStatus = userData_log(user_data, "auth_success");
+            if (logStatus != 0) {
+                printf("ERROR: Failed to preform first contact log\n");
+            }
+            return WOLFSSH_USERAUTH_SUCCESS;
+        }
+
+        free(activated_credentials);
+        int logStatus = userData_log(user_data, "auth_failure");
+        if (logStatus != 0) {
+            printf("ERROR: Failed to preform first contact log\n");
+        }
+        return WOLFSSH_USERAUTH_FAILURE;
+    }
+    if (is_credential_match(user_data->username) && is_credential_match(user_data->password)) {
+        int logStatus = userData_log(user_data, "auth_success");
+        if (logStatus != 0) {
+            printf("ERROR: Failed to preform first contact log\n");
+        }
+
+        snprintf(credential_combo, 32, "%s:%s", user_data->username, user_data->password);
+        create_redis_entry(credential_field, credential_combo);
+        return WOLFSSH_USERAUTH_SUCCESS;
+    }
+
+    int logStatus = userData_log(user_data, "auth_failure");
     if (logStatus != 0) {
         printf("ERROR: Failed to preform first contact log\n");
     }
-    return WOLFSSH_USERAUTH_SUCCESS;
+    return WOLFSSH_USERAUTH_FAILURE;
 }
