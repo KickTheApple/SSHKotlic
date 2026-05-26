@@ -11,6 +11,7 @@ class LogSerializer(serializers.Serializer):
     container_id = serializers.CharField(required=False)
     username = serializers.CharField(required=False)
     password = serializers.CharField(required=False)
+    activity = serializers.BooleanField()
 
 class BashSerializer(serializers.Serializer):
     timestamp = serializers.DateTimeField(source="@timestamp")

@@ -204,6 +204,8 @@ class LogsView(APIView):
         response: list = list(search.scan())
 
         session_set = []
+        started_set = set()
+        ended_set = set()
         for hit in response:
             if "session_id" not in hit:
                 continue
@@ -211,18 +213,34 @@ class LogsView(APIView):
             if sesh_id not in session_set:
                 session_set.append(sesh_id)
 
+            event_name = hit["event_name"]
+            if event_name == "connection_start" and sesh_id not in started_set:
+                started_set.add(sesh_id)
+            elif event_name == "connection_end" and sesh_id not in ended_set:
+                ended_set.add(sesh_id)
+        active_set = list(started_set.difference(ended_set))
+
         search = PoticaDocument.search()
         search = search.filter("terms", session_id=session_set)
         search = search.filter("term", event_name="connection_start")
 
         response = list(search.scan())
 
+        hit_list = []
+        for hit in response:
+            hitting_dict = hit.to_dict()
+            if hitting_dict["session_id"] in active_set:
+                hitting_dict["activity"] = True
+            else:
+                hitting_dict["activity"] = False
+            hit_list.append(hitting_dict)
+
         serializer = LogSerializer(
-            [hit.to_dict() for hit in response],
+            hit_list,
             many=True
         )
 
         return Response({
             "count": len(serializer.data),
-            "results" :serializer.data
+            "results": serializer.data
         })
