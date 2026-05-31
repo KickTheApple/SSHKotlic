@@ -3,6 +3,7 @@
 //
 
 #include "generate.h"
+#include "lookup.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,6 +23,14 @@ char* generate_session_id(int length) {
     }
     newID[length] = '\0';
 
+    while (is_redis_entry(newID) == 1) {
+        for (int i = 0; i < length; i++) {
+            newID[i] = '0' + rand() % ('9' - '0' + 1);
+        }
+        newID[length] = '\0';
+    }
+
+    create_redis_entry(newID, "1");
     return newID;
 }
 

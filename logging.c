@@ -18,7 +18,7 @@ int pcap_sender(userData* user_data) {
         return 1;
     }
 
-    curl_easy_setopt(curler, CURLOPT_URL, "http://localhost:8000/datapot/api/pcap/");
+    curl_easy_setopt(curler, CURLOPT_URL, "http://localhost:8000/api/pcap/");
     curl_mime *mime = curl_mime_init(curler);
 
     curl_mimepart *title_part = curl_mime_addpart(mime);
@@ -65,11 +65,15 @@ char* whatIsMyIP(int clientFD, userData* user_data) {
 }
 
 int bashinput_log(byte* data, userData* user_data) {
-    time_t current_time = time(NULL);
+    struct timeval precise_current_time;
+    gettimeofday(&precise_current_time, NULL);
+
+    time_t current_time = precise_current_time.tv_sec;
     struct tm current_time_formated;
     localtime_r(&current_time, &current_time_formated);
     char currentBuffer[64];
-    strftime(currentBuffer, sizeof(currentBuffer), "%Y-%m-%d %H:%M:%S", &current_time_formated);
+    int writtenAmount = strftime(currentBuffer, sizeof(currentBuffer), "%Y-%m-%dT%H:%M:%S", &current_time_formated);
+    snprintf(currentBuffer+writtenAmount, sizeof(currentBuffer)-writtenAmount, ".%03ldZ", precise_current_time.tv_usec / 1000);
 
     cJSON* json = cJSON_CreateObject();
 
@@ -93,23 +97,27 @@ int bashinput_log(byte* data, userData* user_data) {
 }
 
 int userData_log(userData* user_data, char* event_type) {
+    struct timeval precise_current_time;
+    gettimeofday(&precise_current_time, NULL);
 
-    time_t current_time = time(NULL);
+    time_t current_time = precise_current_time.tv_sec;
     struct tm current_time_formated;
     localtime_r(&current_time, &current_time_formated);
     char currentBuffer[64];
-    strftime(currentBuffer, sizeof(currentBuffer), "%Y-%m-%d %H:%M:%S", &current_time_formated);
+    int writtenAmount = strftime(currentBuffer, sizeof(currentBuffer), "%Y-%m-%dT%H:%M:%S", &current_time_formated);
+    snprintf(currentBuffer+writtenAmount, sizeof(currentBuffer)-writtenAmount, ".%03ldZ", precise_current_time.tv_usec / 1000);
 
     struct tm timeOfBirth_formated;
-    localtime_r(&(user_data->timeOfBirth), &timeOfBirth_formated);
+    localtime_r(&(user_data->timeOfBirth.tv_sec), &timeOfBirth_formated);
     char beginningBuffer[64];
-    strftime(beginningBuffer, sizeof(beginningBuffer), "%Y-%m-%d %H:%M:%S", &timeOfBirth_formated);
+    writtenAmount = strftime(beginningBuffer, sizeof(beginningBuffer), "%Y-%m-%dT%H:%M:%S", &timeOfBirth_formated);
+    snprintf(beginningBuffer+writtenAmount, sizeof(beginningBuffer)-writtenAmount, ".%03ldZ", user_data->timeOfBirth.tv_usec / 1000);
 
     cJSON *json = cJSON_CreateObject();
     cJSON_AddStringToObject(json, "event_name", event_type);
     cJSON_AddStringToObject(json, "event_time", currentBuffer);
 
-    if (user_data->timeOfBirth) cJSON_AddStringToObject(json, "start_time", beginningBuffer);
+    if (user_data->timeOfBirth.tv_sec) cJSON_AddStringToObject(json, "start_time", beginningBuffer);
     if (user_data->id) cJSON_AddStringToObject(json, "session_id", user_data->id);
     if (user_data->ip) cJSON_AddStringToObject(json, "src_ip", user_data->ip);
     if (user_data->port) cJSON_AddNumberToObject(json, "src_port", user_data->port);

@@ -38,21 +38,21 @@ char* get_redis_entry(char* key) {
 }
 
 int is_redis_entry(char* key) {
-    printf("DO WE GET HERE\n");
+    printf("Is redis entry check\n");
     redisReply* reply = redisCommand(server_data.redisConn, "get %s", key);
     printf("%s\n", key);
     if (reply == NULL) {
-        printf("WE DO DO NOT HAVE\n");
+        printf("Redis Reply couldn't have been created\n");
         return -1;
     }
     if (reply->str == NULL) {
-        printf("We did not find value\n");
+        printf("Redis entry not exists\n");
         freeReplyObject(reply);
         return 0;
     }
     printf("%s\n", reply->str);
     freeReplyObject(reply);
-    printf("WE DO GET HERE\n");
+    printf("Redis entry exists\n");
     return 1;
 }
 
