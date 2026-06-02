@@ -1,11 +1,12 @@
 import json
 import os.path
+import string
 from datetime import datetime, timezone
+
 from django_opensearch_dsl.search import Search
-from requests import session
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
-from rest_framework.status import HTTP_401_UNAUTHORIZED
+from rest_framework.status import HTTP_401_UNAUTHORIZED, HTTP_200_OK
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from scapy.utils import PcapReader
@@ -46,8 +47,59 @@ class SearchParams:
                 chosen_ones[param] = self.__dict__[param]
         return chosen_ones
 
+def get_repeat_list(response):
+    repeat_set = set()
+    for hit in response:
+        if "session_id" not in response:
+            continue
+        sesh_id = hit["session_id"]
+        search: Search = PoticaDocument.search()
+        search = search.filter("term", session_id=sesh_id)
+        search = search.filter("term", event_name="sign_in_repeat")
+        if search.count() > 0:
+            repeat_set.add(sesh_id)
+    return list(repeat_set)
+
+
+def get_bash_list(response):
+    bash_set = set()
+    for hit in response:
+        if "session_id" not in hit:
+            continue
+        sesh_id = hit["session_id"]
+        search: Search = BashDocument.search()
+        search = search.filter("term", session_id=sesh_id)
+        if search.count() > 0:
+            bash_set.add(sesh_id)
+    return list(bash_set)
+
+def get_active_list(response):
+    active_set = set()
+    for hit in response:
+        if "session_id" not in hit:
+            continue
+        sesh_id = hit["session_id"]
+        search: Search = PoticaDocument.search()
+        search = search.filter("term", session_id=sesh_id)
+        search = search.filter("term", event_name="connection_end")
+        if search.count() == 0:
+            active_set.add(sesh_id)
+    return list(active_set)
+
+def hit_handling(response):
+    active_list = get_active_list(response)
+    bash_list = get_bash_list(response)
+
+    for hit in response:
+        hit["active_state"] = hit["session_id"] in active_list
+        hit["bash_state"] = hit["session_id"] in bash_list
+
+    response.sort(key=lambda x: x["event_time"])
+
+    return response
+
 class PcapView(APIView):
-    permission_classes = [IsAuthenticated]
+    #permission_classes = [IsAuthenticated]
 
     def get(self, request: Request):
         if not request.user.is_authenticated:
@@ -110,11 +162,11 @@ class PcapView(APIView):
         return Response({"status": "failure", "errors": form.errors}, status=400)
 
 class BashView(APIView):
-    permission_classes = [IsAuthenticated]
+    #permission_classes = [IsAuthenticated]
 
     def get(self, request: Request):
-        if not request.user.is_authenticated:
-            return Response({"status": "no auth"}, status=HTTP_401_UNAUTHORIZED)
+     #   if not request.user.is_authenticated:
+      #      return Response({"status": "no auth"}, status=HTTP_401_UNAUTHORIZED)
 
         query_info = request.query_params
         if "session_id" not in query_info:
@@ -127,6 +179,7 @@ class BashView(APIView):
         search = search.filter("term", session_id=sesh_id)
 
         response: list = list(search.scan())
+        response.sort(key=lambda x: x["event_time"])
 
         serializer = BashSerializer(
             [hit.to_dict() for hit in response],
@@ -144,18 +197,17 @@ class SessionView(APIView):
     def get(self, request: Request):
         query_info = request.query_params
         if "session_id" not in query_info:
-            return Response({
-                "status": "failure"
-            })
+            return Response({"status": "failure"})
         sesh_id = query_info.get("session_id")
 
         search: Search = PoticaDocument.search()
         search = search.filter("term", session_id=sesh_id)
 
         response: list = list(search.scan())
+        response = hit_handling(response)
 
         serializer = LogSerializer(
-            [hit.to_dict() for hit in response],
+            response,
             many=True
         )
 
@@ -163,6 +215,44 @@ class SessionView(APIView):
             "count": len(serializer.data),
             "results": serializer.data
         })
+
+class SessionCredView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request):
+        if not request.user.is_authenticated:
+            return Response({"status": "no auth"}, status=HTTP_401_UNAUTHORIZED)
+
+        query_info = request.query_params
+        if "session_id" not in query_info:
+            return Response({"status": "failure"})
+
+        sesh_id = query_info.get("session_id")
+        search: Search = PoticaDocument.search()
+        search = search.filter("term", session_id=sesh_id)
+        search = search.filter("terms", event_name=["connection_end", "auth_failure", "auth_success"])
+
+        response = list(search.scan())
+
+        username = ""
+        password_list = list()
+        for hit in response:
+            if hit["event_name"] == "connection_end":
+                username = hit["username"]
+            elif hit["event_name"] == "auth_failure":
+                username = hit["username"]
+                password_list.append(hit["password"])
+            else:
+                username = hit["username"]
+                password_list.append(hit["password"])
+
+        return Response({
+            "attempts": len(password_list),
+            "username": username,
+            "password": password_list
+        }, HTTP_200_OK)
+
+
 
 class LogsView(APIView):
     permission_classes = [IsAuthenticated]
@@ -201,42 +291,12 @@ class LogsView(APIView):
             else:
                 search = search.filter("term", **{activity: active_ones[activity]})
 
-        response: list = list(search.scan())
-
-        session_set = []
-        started_set = set()
-        ended_set = set()
-        for hit in response:
-            if "session_id" not in hit:
-                continue
-            sesh_id = hit["session_id"]
-            if sesh_id not in session_set:
-                session_set.append(sesh_id)
-
-            event_name = hit["event_name"]
-            if event_name == "connection_start" and sesh_id not in started_set:
-                started_set.add(sesh_id)
-            elif event_name == "connection_end" and sesh_id not in ended_set:
-                ended_set.add(sesh_id)
-        active_set = list(started_set.difference(ended_set))
-
-        search = PoticaDocument.search()
-        search = search.filter("terms", session_id=session_set)
         search = search.filter("term", event_name="connection_start")
-
-        response = list(search.scan())
-
-        hit_list = []
-        for hit in response:
-            hitting_dict = hit.to_dict()
-            if hitting_dict["session_id"] in active_set:
-                hitting_dict["activity"] = True
-            else:
-                hitting_dict["activity"] = False
-            hit_list.append(hitting_dict)
+        response: list = list(search.scan())
+        response = hit_handling(response)
 
         serializer = LogSerializer(
-            hit_list,
+            response,
             many=True
         )
 
@@ -244,3 +304,66 @@ class LogsView(APIView):
             "count": len(serializer.data),
             "results": serializer.data
         })
+
+
+class LogCountView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request):
+        if not request.user.is_authenticated:
+            return Response({"status": "no_auth"}, status=HTTP_401_UNAUTHORIZED)
+
+        search: Search = PoticaDocument.search()
+        search = search.filter("term", event_name="connection_start")
+
+        response = search.count()
+
+        return Response({"count": response}, status=HTTP_200_OK)
+
+
+class LogActiveView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request):
+        if not request.user.is_authenticated:
+            return Response({"status": "no_auth"}, status=HTTP_401_UNAUTHORIZED)
+
+        searchStart: Search = PoticaDocument.search()
+        searchStart = searchStart.filter("term", event_name="connection_start")
+
+        searchEnd: Search = PoticaDocument.search()
+        searchEnd = searchEnd.filter("term", event_name="connection_end")
+        endings = list(searchEnd.scan())
+        invalidSessions = list(set(sessioning["session_id"] for sessioning in endings if "session_id" in sessioning))
+
+        searchStart = searchStart.exclude("terms", session_id=invalidSessions)
+        response = searchStart.count()
+        print([foundSession["session_id"] for foundSession in list(searchStart.scan())])
+
+
+
+        return Response({"count": response}, status=HTTP_200_OK)
+
+class LogRecentView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request):
+        if not request.user.is_authenticated:
+            return Response({"status": "no_auth"}, status=HTTP_401_UNAUTHORIZED)
+
+        search: Search = PoticaDocument.search()
+        search = search.filter("term", event_name="connection_start")
+        response = list(search[0:1].execute())
+
+        if len(response) > 0 and "session_id" in response[0]:
+            response = hit_handling(response)
+
+        serializer: LogSerializer = LogSerializer(
+            response,
+            many=True
+        )
+
+        return Response({
+            "count": len(serializer.data),
+            "results": serializer.data
+        }, status=HTTP_200_OK)
