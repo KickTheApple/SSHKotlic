@@ -16,7 +16,7 @@ userData user_data;
 int main(int argc, char* args[]) {
     setvbuf(stdout, NULL, _IONBF, 0);
     signal(SIGINT, signal_catcher);
-    signal(SIGCHLD, SIG_IGN);
+    signal(SIGCHLD, fork_catcher);
 
     server_data.redisConn = redisConnect("127.0.0.1", 6379);
     if (server_data.redisConn  == NULL || server_data.redisConn ->err) {
@@ -33,6 +33,7 @@ int main(int argc, char* args[]) {
     server_data.pcapDumper = NULL;
     server_data.wolfServer = NULL;
 
+    server_data.forkCount = 0;
     server_data.isOver = 0;
     server_data.ipAddress = 0;
     server_data.port = 22;
@@ -52,7 +53,8 @@ int main(int argc, char* args[]) {
         return 1;
     }
 
-    user_data.timeOfBirth = 0;
+    user_data.timeOfBirth.tv_sec = 0;
+    user_data.timeOfBirth.tv_usec = 0;
 
     wolfSSH_Init();
 
@@ -94,13 +96,16 @@ int main(int argc, char* args[]) {
         }
         if (vilca > 0) {
             close(clientFD);
+            server_data.forkCount++;
             continue;
         }
+        signal(SIGCHLD, SIG_IGN);
+        server_data.forkCount = 0;
 
         time_t timerOfStart = time(NULL);
         srand(timerOfStart);
 
-        user_data.timeOfBirth = timerOfStart;
+        gettimeofday(&user_data.timeOfBirth, NULL);
         user_data.id = generate_session_id(10);
         user_data.ip = whatIsMyIP(clientFD, &user_data);
         user_data.keyAlgo = NULL;

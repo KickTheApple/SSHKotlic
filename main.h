@@ -27,10 +27,12 @@ struct serveringData {
     int socketFD;
     int ipAddress;
     int port;
+
+    int forkCount;
 } typedef serverData;
 
 struct useringData {
-    time_t timeOfBirth;
+    struct timeval timeOfBirth;
     char* id;
     char* ip;
     int port;

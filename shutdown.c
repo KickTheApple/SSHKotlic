@@ -11,6 +11,8 @@
 
 #include "shutdown.h"
 
+#include <sys/wait.h>
+
 extern serverData server_data;
 extern userData user_data;
 
@@ -27,19 +29,32 @@ int kill_all_user_data(userData* billData) {
     return 0;
 }
 
+void fork_catcher(int signal) {
+    printf("Fork is about to fall of the counter %d\n", server_data.forkCount);
+    waitpid(-1, NULL, WNOHANG);
+    server_data.forkCount--;
+
+    printf("Fork fell of the counter %d\n", server_data.forkCount);
+}
+
 void signal_catcher(int signal) {
+    printf("Fork count is: %d\n", server_data.forkCount);
+    while (server_data.forkCount) {
+    }
     close(server_data.socketFD);
-    wolfSSH_CTX_free(server_data.wolfContext);
     if (server_data.wolfServer) {
         if (server_data.bashCommunicator) {
             wolfSSH_stream_exit(server_data.wolfServer, 130);
             close(server_data.bashCommunicator);
+            // TODO: REPLACE SLEEP WITH Conditional joins for Reader and Writer thread
             sleep(2);
         }
         wolfSSH_free(server_data.wolfServer);
     }
-    if (server_data.bashInstance) stop_container(user_data.containerID);
+    wolfSSH_CTX_free(server_data.wolfContext);
     wolfSSH_Cleanup();
+
+    if (server_data.bashInstance) stop_container(user_data.containerID);
 
     if (server_data.pcapHandle != NULL && server_data.pcapDumper != NULL) {
         pcap_breakloop(server_data.pcapHandle);

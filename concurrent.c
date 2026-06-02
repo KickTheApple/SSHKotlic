@@ -42,7 +42,7 @@ void* read_thread(void* args) {
             break;
         }
     }
-    return NULL;
+    pthread_exit((int*) 1);
 }
 
 void* write_thread(void* args) {
@@ -52,7 +52,7 @@ void* write_thread(void* args) {
     user_data.bash_file = fopen(filename, "w");
     if (user_data.bash_file == NULL) {
         printf("FAILED TO WRITE TO FILE\n");
-        return NULL;
+        pthread_exit((int*) 1);
     }
     while (1) {
         long ret = read(server_data.bashCommunicator, channelBuffer, sizeof(channelBuffer)-1);
@@ -75,5 +75,5 @@ void* write_thread(void* args) {
     }
     fclose(user_data.bash_file);
     user_data.bash_file = NULL;
-    return NULL;
+    pthread_exit((int*) 1);
 }
