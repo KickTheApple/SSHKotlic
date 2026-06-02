@@ -11,17 +11,17 @@ function redirectTo(pathName: string) {
 const menuData = ref([
   {
     label: "Dashboard",
-    icon: 'pi pi-home',
+    icon: 'pi pi-objects-column',
     command: redirectTo("dashboard"),
   },
   {
     label: "Statistics",
-    icon: "pi pi-home",
+    icon: "pi pi-chart-bar",
     command: redirectTo("statistics"),
   },
   {
     label: "Logs",
-    icon: "pi pi-home",
+    icon: "pi pi-list",
     command: redirectTo("logs"),
   },
 ]);

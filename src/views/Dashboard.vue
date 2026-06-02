@@ -27,7 +27,7 @@ interface hittingData {
 
 let log_list = ref<log_format[]>([]);
 let total_session_count = ref<Number>(0);
-let analysis_target = ref<log_format>();
+let analysis_target = ref<log_format>(null);
 let active_attacks = ref(0);
 let recent_session = ref<log_format>(null);
 
@@ -37,7 +37,7 @@ async function fetchData(): Promise<Array<any>> {
   let foundLog = []
 
   try {
-    const response_total = await axios.get("/api/logs/");
+    const response_total = await axios.get("/api/logs/sessions");
     const response_hits: hittingData = response_total.data;
     response_hits.results.forEach((responder: log_format) => {
       foundLog.push(responder)
@@ -50,36 +50,41 @@ async function fetchData(): Promise<Array<any>> {
 }
 
 function analyseData() {
-  let selected_log: log_format = analysis_target.value;
-  console.log(selected_log);
+  let selected_log: log_format = analysis_target?.value;
   if (analysis_target == null) {
     return;
   }
   router.push({ name: "analysis", params: {sessionID: selected_log.session_id} })
 }
 
-function getActiveSessionCount(logs: Array<log_format>): number {
-  let count = 0;
-  for (let log of logs) {
-    if (log.activity) {
-      count++;
-    }
+async function getTotalSessionCount(): Promise<number> {
+  try {
+    let response = await axios.get("/api/logs/total_count");
+    return response.data.count;
+  } catch {
+    return 0;
   }
-  return count;
 }
 
-function getMostRecentSession(logs: Array<log_format>): log_format {
-  let mostRecentTime = 0
-  let mostRecentSession = null
-  for (let log of logs) {
-    let currentSessionTime = Date.parse(log.event_time);
-    if (mostRecentTime < currentSessionTime) {
-      mostRecentTime = currentSessionTime;
-      mostRecentSession = log;
-    }
+async function getActiveSessionCount(): Promise<number> {
+  try {
+    let response = await axios.get("/api/logs/active_count");
+    return response.data.count;
+  } catch {
+    return 0;
   }
-  console.log(mostRecentSession)
-  return mostRecentSession;
+}
+
+async function getMostRecentSession(): Promise<log_format> {
+  try {
+    let response = await axios.get("/api/logs/recent");
+    if (response.data.count == 1) {
+      return response.data.results[0]
+    }
+    return;
+  } catch {
+    return;
+  }
 }
 
 function redirectToRecentSession(log: log_format) {
@@ -91,18 +96,19 @@ function redirectToRecentSession(log: log_format) {
 
 onMounted(async () => {
   log_list.value = await fetchData() ?? []
-  active_attacks.value = getActiveSessionCount(log_list.value)
-  recent_session.value = getMostRecentSession(log_list.value)
+  total_session_count.value = await getTotalSessionCount();
+  active_attacks.value = await getActiveSessionCount();
+  recent_session.value = await getMostRecentSession();
 })
 
 </script>
 
 <template>
   <MovingMenu />
-  <Pathway />
+
   <div class="dashboard-overview">
     <div class="dashbaord-card">
-      <h2>Total session count: {{ log_list.length }}</h2>
+      <h2>Total session count: {{ total_session_count }}</h2>
     </div>
     <div class="dashbaord-card">
       <h2>Current Active attacks are {{ active_attacks }}</h2>
